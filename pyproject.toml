@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyprobound"
+authors = [
+    { name = "Lucas A. N. Melo", email = "lucas.melo@columbia.edu" },
+    { name = "Harmen J. Bussemaker", email = "hjb2004@columbia.edu" },
+]
+description = "Re-implementation of ProBound using PyTorch"
+requires-python = ">=3.10"
+dynamic = ["version"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "torch",
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "logomaker",
+    "typing-extensions",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "pyprobound.__version__" }
+
+[tool.isort]
+profile = "black"
+line_length = 79
+skip_gitignore = true
+
+[tool.black]
+line-length = 79
+target-version = ['py310']
+skip_magic_trailing_comma = true
+
+[tool.mypy]
+ignore_missing_imports = true
+strict = true
+warn_unreachable = true
+enable_error_code = [
+    "explicit-override",
+    "redundant-expr",
+    "truthy-bool",
+    "truthy-iterable",
+    "ignore-without-code",
+    "redundant-self",
+]
+
+[tool.pylint.main]
+jobs = 0
+
+[tool.pylint.basic]
+variable-rgx = "^[a-z][a-zA-Z0-9_]*$"
+
+[tool.pylint.format]
+ignore-long-lines = "(?x)(\n\\#\\ type:\\ ignore)"
+max-line-length = 79
+
+[tool.pylint."messages control"]
+disable = [
+    "import-error",
+    "too-few-public-methods",
+    "too-many-ancestors",
+    "too-many-arguments",
+    "too-many-branches",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-statements",
+]
+enable = [
+    "deprecated-pragma",
+    "useless-suppression",
+    "use-symbolic-message-instead",
+    "bad-inline-option",
+]

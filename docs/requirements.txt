@@ -1,0 +1,4 @@
+torch
+sphinx==6.2.1
+git+https://github.com/executablebooks/MyST-NB
+sphinx-rtd-theme==1.2.2
