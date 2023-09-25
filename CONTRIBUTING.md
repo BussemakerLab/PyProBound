@@ -1,13 +1,7 @@
-* The `probound` module is contained in [src/probound](src/probound).
+* The `pyprobound` module is contained in [src/pyprobound](src/pyprobound)
 * Package configuration is found in
     [pyproject.toml](pyproject.toml) and [setup.cfg](setup.cfg)
 * You can use `tox`(https://tox.wiki) to automate linting, testing, and docs
-
-# Style
-* Follow the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)
-* Use {`expt`, `rnd`, `agg`, `ctrb`, `bmd`, `conv`}`_idx` in internal code,
-  and {`experiment`, `round`, `aggregate`, `contribution`, `binding_mode`, `conv_layer`}`_index`
-  for user-facing code
 
 # Linters and formatters
 * [mypy](https://mypy.readthedocs.io)
@@ -23,5 +17,5 @@
 # Docs
 * Docs are built in [Sphinx](https://www.sphinx-doc.org)
     and can be edited in [docs/source](docs/source)
-* The [docs/source/_notebooks](docs/source/_notebooks)
-    is tracked using [Git LFS](https://github.com/git-lfs/git-lfs)
+* The example notebooks [docs/source/_notebooks](docs/source/_notebooks)
+    are tracked using [Git LFS](https://github.com/git-lfs/git-lfs)

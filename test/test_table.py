@@ -1,4 +1,4 @@
-# pylint: disable=missing-class-docstring, missing-module-docstring
+# pylint: disable=missing-class-docstring, missing-function-docstring, missing-module-docstring
 import unittest
 
 import torch

@@ -1,7 +1,7 @@
-ProBound
-========
+PyProBound
+==========
 
-Re-implementation of ProBound [#Rube2022]_ in PyTorch.
+Implementation of ProBound [#Rube2022]_ in PyTorch.
 
 .. toctree::
    :hidden:
@@ -13,11 +13,7 @@ Re-implementation of ProBound [#Rube2022]_ in PyTorch.
    Dll
    GR
    Src
-
-.. toctree::
-   :hidden:
-
-   api
+   Src_earlystop
 
 Examples
 --------
@@ -28,11 +24,21 @@ Examples
 - :doc:`Dll: Kd-seq <_notebooks/Dll>`
 - :doc:`GR: ChIP-seq <_notebooks/GR>`
 - :doc:`Src: Kinase-seq <_notebooks/Src>`
+- :doc:`Src: Kinase-seq with Early Stopping <_notebooks/Src_earlystop>`
 
 Overview
 --------
-.. image:: _static/ProBound.svg
-  :alt: ProBound class diagram
+.. image:: _static/PyProBound.svg
+  :alt: PyProBound class diagram
+
+API
+---
+.. autosummary::
+   :toctree: _autosummary
+   :template: module.rst
+   :recursive:
+
+   pyprobound
 
 Reference
 ----------

@@ -1,4 +1,4 @@
-"""Collection of small calculation functions"""
+"""Typed helper functions."""
 
 from typing import cast, overload
 
@@ -28,6 +28,7 @@ def ceil_div(dividend: Tensor, divisor: Tensor) -> Tensor:
 
 
 def ceil_div(dividend: int | Tensor, divisor: int | Tensor) -> int | Tensor:
+    """Typed ceiling division."""
     return -(-dividend // divisor)
 
 
@@ -52,12 +53,18 @@ def floor_div(dividend: Tensor, divisor: Tensor) -> Tensor:
 
 
 def floor_div(dividend: int | Tensor, divisor: int | Tensor) -> int | Tensor:
+    """Typed floor division."""
     return dividend // divisor
 
 
 def log1mexp(tensor: Tensor, /, eps: float = 1e-8) -> Tensor:
-    """Numerically stable log(1 - exp(-abs(tensor)))"""
-    # https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+    r"""Computes the element-wise log1mexp in a numerically stable way.
+
+    .. math::
+        \log \left( 1 - e^{-x} \right)
+
+    https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf.
+    """
     tensor = torch.where(torch.abs(tensor) < eps, eps, torch.abs(tensor))
     return torch.where(
         tensor > 0.693,
@@ -67,24 +74,34 @@ def log1mexp(tensor: Tensor, /, eps: float = 1e-8) -> Tensor:
 
 
 def logsigmoid(tensor: Tensor, /, threshold: float = 20) -> Tensor:
+    r"""Computes the element-wise logsigmoid using softplus for stability.
+
+    .. math::
+        \log \frac{1}{1 + e^{-x}}
+    """
     return cast(
         Tensor, -torch.nn.functional.softplus(-tensor, threshold=threshold)
     )
 
 
-def betaln(a: Tensor, b: Tensor) -> Tensor:
+def betaln(z_1: Tensor, z_2: Tensor) -> Tensor:
+    r"""Computes the natural logarithm of the beta function.
+
+    .. math::
+        \log \frac{\Gamma(z_1) \Gamma(z_2)}{\Gamma(z_1 + z_2)}
+    """
     return cast(
         Tensor,
         (
-            torch.special.gammaln(a)
-            + torch.special.gammaln(b)
-            - torch.special.gammaln(a + b)
+            torch.special.gammaln(z_1)
+            + torch.special.gammaln(z_2)
+            - torch.special.gammaln(z_1 + z_2)
         ),
     )
 
 
 def avg_pool1d(tensor: Tensor, kernel: int = 1) -> Tensor:
-    """Average pooling along the first dimension"""
+    """Average pooling along the first dimension."""
     if kernel <= 1:
         return tensor
     dims = tensor.dim()
@@ -108,9 +125,17 @@ def avg_pool1d(tensor: Tensor, kernel: int = 1) -> Tensor:
 def get_split_size(
     max_embedding_size: int, max_split: int, device: str | torch.device
 ) -> int:
-    """Maximum batch dimension
-    See https://github.com/pytorch/pytorch/issues/96225
-    See https://github.com/pytorch/pytorch/issues/96716
+    """Calculates the minibatch needed to avoid GPU limits on tensor sizes.
+
+    See https://github.com/pytorch/pytorch/issues/96225.
+    See https://github.com/pytorch/pytorch/issues/96716.
+
+    Args:
+        max_embedding_size: The maximum number of bytes needed to encode a
+            sequence.
+        max_split: Maximum number of sequences scored at a time
+            (lower values reduce memory but increase computation time).
+        device: The current device of the model.
     """
     if isinstance(device, torch.device):
         device = device.type
@@ -119,22 +144,23 @@ def get_split_size(
     return max_split
 
 
-def get_ordinal(n: int) -> str:
-    """Convert int to str with ordinal suffix"""
-    if n % 100 in (11, 12, 13):
-        return f"{n}th"
-    match n % 10:
+def get_ordinal(integer: int) -> str:
+    """Converts an integer to a string with an ordinal suffix."""
+    if integer % 100 in (11, 12, 13):
+        return f"{integer}th"
+    match integer % 10:
         case 1:
-            return f"{n}st"
+            return f"{integer}st"
         case 2:
-            return f"{n}nd"
+            return f"{integer}nd"
         case 3:
-            return f"{n}rd"
+            return f"{integer}rd"
         case _:
-            return f"{n}th"
+            return f"{integer}th"
 
 
 def clear_cache() -> None:
+    """Calls the empty_cache() function matching the available GPU backends."""
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
     if torch.cuda.is_available():

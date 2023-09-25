@@ -1,4 +1,7 @@
-"""Base class to facilitate buffer registration"""
+"""PyTorch container implementations to fix buffer registration and typing.
+
+Members are explicitly re-exported in pyprobound.
+"""
 from __future__ import annotations
 
 import collections
@@ -10,7 +13,7 @@ from collections.abc import (
     MutableMapping,
     MutableSequence,
 )
-from typing import Any, TypeVar, cast, overload
+from typing import TypeVar, cast, overload
 
 import torch
 from torch import Tensor
@@ -22,33 +25,11 @@ from . import __version__
 ModuleT = TypeVar("ModuleT", bound=torch.nn.Module)
 
 
-class Buffer(torch.Tensor):
-    """Make Buffer registration similar to Parameter registration
+class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
+    """Typed ModuleList.
 
-    See https://github.com/pytorch/pytorch/issues/35735"""
-
-    def __init__(self, tensor: Tensor):
-        super().__init__()
-        self.tensor = tensor
-
-
-class TModule(torch.nn.Module):
-    """Typed Module with Buffer registration similar to Parameter registration
-
-    See https://github.com/pytorch/pytorch/issues/35735"""
-
-    @override
-    def __setattr__(self, name: str, value: Any) -> None:
-        if isinstance(value, Buffer):
-            self.register_buffer(name, value.tensor)
-        else:
-            super().__setattr__(name, value)
-
-
-class TModuleList(TModule, MutableSequence[ModuleT]):
-    """Typed ModuleList
-
-    See https://github.com/pytorch/pytorch/pull/89135"""
+    See https://github.com/pytorch/pytorch/pull/89135.
+    """
 
     _modules: collections.OrderedDict[str, ModuleT]  # type: ignore[assignment]
 
@@ -58,7 +39,7 @@ class TModuleList(TModule, MutableSequence[ModuleT]):
             self += modules
 
     def _get_abs_string_index(self, index: int) -> str:
-        """Get the absolute index for the list of modules"""
+        """Get the absolute index for the list of modules."""
         index = operator.index(index)
         if not -len(self) <= index < len(self):
             raise IndexError(f"index {index} is out of range")
@@ -138,19 +119,21 @@ class TModuleList(TModule, MutableSequence[ModuleT]):
 
     @override
     def insert(self, index: int, value: ModuleT) -> None:
+        """Insert value before index."""
         for i in range(len(self._modules), index, -1):
             self._modules[str(i)] = self._modules[str(i - 1)]
         self._modules[str(index)] = value
 
     @override
     def __hash__(self) -> int:
-        return TModule.__hash__(self)
+        return torch.nn.Module.__hash__(self)
 
 
-class TParameterList(TModule, MutableSequence[Parameter]):
-    """Typed ParameterList
+class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
+    """Typed ParameterList.
 
-    See https://github.com/pytorch/pytorch/pull/89135"""
+    See https://github.com/pytorch/pytorch/pull/89135.
+    """
 
     _parameters: collections.OrderedDict[str, Parameter]  # type: ignore[assignment]
 
@@ -254,6 +237,7 @@ class TParameterList(TModule, MutableSequence[Parameter]):
 
     @override
     def insert(self, index: int, value: Tensor) -> None:
+        """Insert value before index."""
         for i in range(len(self._parameters), index, -1):
             self._parameters[str(i)] = self._parameters[str(i - 1)]
         param = Parameter(value) if not isinstance(value, Parameter) else value
@@ -261,13 +245,14 @@ class TParameterList(TModule, MutableSequence[Parameter]):
 
     @override
     def __hash__(self) -> int:
-        return TModule.__hash__(self)
+        return torch.nn.Module.__hash__(self)
 
 
-class TParameterDict(TModule, MutableMapping[str, Parameter]):
-    """Typed ParameterDict
+class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
+    """Typed ParameterDict.
 
-    See https://github.com/pytorch/pytorch/pull/92032"""
+    See https://github.com/pytorch/pytorch/pull/92032.
+    """
 
     _parameters: collections.OrderedDict[str, Parameter]  # type: ignore[assignment]
 
@@ -327,4 +312,4 @@ class TParameterDict(TModule, MutableMapping[str, Parameter]):
 
     @override
     def __hash__(self) -> int:
-        return TModule.__hash__(self)
+        return torch.nn.Module.__hash__(self)

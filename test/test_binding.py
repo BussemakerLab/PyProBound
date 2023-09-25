@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name, missing-class-docstring, protected-access, missing-module-docstring
+# pylint: disable=invalid-name, missing-class-docstring, missing-function-docstring, missing-module-docstring, protected-access
 import unittest
 
 import torch
@@ -6,33 +6,30 @@ import torch.nn.functional as F
 from torch import Tensor
 from typing_extensions import override
 
-import probound.binding
-import probound.conv1d
-import probound.layers
-import probound.psam
+import pyprobound
 
 from . import make_count_table
 from .test_conv1d import initialize_conv1d
 
 
-def initialize_binding(binding: probound.binding.BindingMode) -> None:
+def initialize_binding(binding: pyprobound.Mode) -> None:
     for layer in binding.layers:
-        if isinstance(layer, probound.conv1d.Conv1d):
+        if isinstance(layer, pyprobound.layers.Conv1d):
             initialize_conv1d(layer)
 
 
-class TestBindingMode_0(unittest.TestCase):
+class TestMode_0(unittest.TestCase):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.binding = probound.binding.BindingMode(
+        self.binding = pyprobound.Mode(
             [
-                probound.conv1d.Conv0d.from_nonspecific(
-                    probound.psam.NonSpecific(
+                pyprobound.layers.Conv0d.from_nonspecific(
+                    pyprobound.layers.NonSpecific(
                         alphabet=self.count_table.alphabet
                     ),
                     self.count_table,
-                    train_omega=True,
+                    train_posbias=True,
                 )
             ]
         )
@@ -53,7 +50,7 @@ class TestBindingMode_0(unittest.TestCase):
         buffers: list[dict[str, Tensor]] = []
         parameters: list[dict[str, torch.nn.Parameter]] = []
         for layer in self.binding.layers:
-            if not isinstance(layer, probound.conv1d.Conv1d):
+            if not isinstance(layer, pyprobound.layers.Conv1d):
                 buffers.append({})
                 parameters.append({})
                 continue
@@ -64,16 +61,12 @@ class TestBindingMode_0(unittest.TestCase):
                     "prev_max_len": layer._max_input_length,
                 }
             )
-            parameters.append(
-                {"prev_theta": layer.theta, "prev_omega": layer.omega}
-            )
+            parameters.append({"prev_posbias": layer.log_posbias})
 
             layer._min_input_length = torch.tensor(float("-inf"))
             layer._max_input_length = torch.tensor(float("inf"))
-            layer.theta.requires_grad_(False)
-            layer.theta.zero_()
-            layer.omega.requires_grad_(False)
-            layer.omega.zero_()
+            layer.log_posbias.requires_grad_(False)
+            layer.log_posbias.zero_()
 
         # get padding length
         pad_len = self.binding.in_len(1, "max")
@@ -122,19 +115,18 @@ class TestBindingMode_0(unittest.TestCase):
         for layer, bufs, params in zip(
             self.binding.layers, buffers, parameters
         ):
-            if not isinstance(layer, probound.conv1d.Conv1d):
+            if not isinstance(layer, pyprobound.layers.Conv1d):
                 continue
             layer._min_input_length = bufs["prev_min_len"]
             layer._max_input_length = bufs["prev_max_len"]
-            layer.theta = params["prev_theta"]
-            layer.omega = params["prev_omega"]
+            layer.log_posbias = params["prev_posbias"]
 
     def test_in_len(self) -> None:
         # store and strip out length information
         buffers: list[dict[str, Tensor]] = []
         parameters: list[dict[str, torch.nn.Parameter]] = []
         for layer in self.binding.layers:
-            if not isinstance(layer, probound.conv1d.Conv1d):
+            if not isinstance(layer, pyprobound.layers.Conv1d):
                 buffers.append({})
                 parameters.append({})
                 continue
@@ -145,16 +137,12 @@ class TestBindingMode_0(unittest.TestCase):
                     "prev_max_len": layer._max_input_length,
                 }
             )
-            parameters.append(
-                {"prev_theta": layer.theta, "prev_omega": layer.omega}
-            )
+            parameters.append({"prev_posbias": layer.log_posbias})
 
             layer._min_input_length = torch.tensor(float("-inf"))
             layer._max_input_length = torch.tensor(float("inf"))
-            layer.theta.requires_grad_(False)
-            layer.theta.zero_()
-            layer.omega.requires_grad_(False)
-            layer.omega.zero_()
+            layer.log_posbias.requires_grad_(False)
+            layer.log_posbias.zero_()
 
         for out_len in range(2, 5):
             # get in_len
@@ -197,12 +185,11 @@ class TestBindingMode_0(unittest.TestCase):
         for layer, bufs, params in zip(
             self.binding.layers, buffers, parameters
         ):
-            if not isinstance(layer, probound.conv1d.Conv1d):
+            if not isinstance(layer, pyprobound.layers.Conv1d):
                 continue
             layer._min_input_length = bufs["prev_min_len"]
             layer._max_input_length = bufs["prev_max_len"]
-            layer.theta = params["prev_theta"]
-            layer.omega = params["prev_omega"]
+            layer.log_posbias = params["prev_posbias"]
 
     def check_nans(self, tensor: Tensor) -> None:
         self.assertFalse(
@@ -210,12 +197,12 @@ class TestBindingMode_0(unittest.TestCase):
         )
 
     def test_shift_footprint(self) -> None:
-        if isinstance(self.binding.layers[0], probound.conv1d.Conv0d):
+        if isinstance(self.binding.layers[0], pyprobound.layers.Conv0d):
             self.skipTest("Can't shift footprint for Conv0d")
 
         n_iter = 3
         for layer in self.binding.layers:
-            if not isinstance(layer, probound.conv1d.Conv1d):
+            if not isinstance(layer, pyprobound.layers.Conv1d):
                 continue
             self.binding.check_length_consistency()
             self.check_nans(self.binding(self.count_table.seqs))
@@ -259,22 +246,22 @@ class TestBindingMode_0(unittest.TestCase):
         self.check_nans(self.binding(self.count_table.seqs))
 
 
-class TestBindingMode_4di1_bin2(TestBindingMode_0):
+class TestMode_4di1_bin2(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.binding = probound.binding.BindingMode(
+        self.binding = pyprobound.Mode(
             [
-                probound.conv1d.Conv1d.from_psam(
-                    probound.psam.PSAM(
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
                         alphabet=self.count_table.alphabet,
                         kernel_size=4,
-                        interaction_distance=1,
+                        pairwise_distance=1,
                         information_threshold=0.0,
                     ),
                     self.count_table,
-                    train_omega=True,
-                    train_theta=True,
+                    train_posbias=True,
+                    unfold=True,
                     bias_bin=2,
                     one_hot=False,
                 )
@@ -283,196 +270,196 @@ class TestBindingMode_4di1_bin2(TestBindingMode_0):
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_3di1_bin2(TestBindingMode_0):
+class TestMode_3di1_3di1_bin2(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer1,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2])
+        self.binding = pyprobound.Mode([layer1, layer2])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2floor(TestBindingMode_0):
+class TestMode_3di1_mp2floor(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=False
             ),
             layer1,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2])
+        self.binding = pyprobound.Mode([layer1, layer2])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2ceil(TestBindingMode_0):
+class TestMode_3di1_mp2ceil(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=True
             ),
             layer1,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2])
+        self.binding = pyprobound.Mode([layer1, layer2])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2floor_3di1_bin2(TestBindingMode_0):
+class TestMode_3di1_mp2floor_3di1_bin2(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=False
             ),
             layer1,
         )
-        layer3 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer3 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer2,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2, layer3])
+        self.binding = pyprobound.Mode([layer1, layer2, layer3])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2ceil_3di1_bin2(TestBindingMode_0):
+class TestMode_3di1_mp2ceil_3di1_bin2(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=True
             ),
             layer1,
         )
-        layer3 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer3 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer2,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2, layer3])
+        self.binding = pyprobound.Mode([layer1, layer2, layer3])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_4di1_bin2_norev(TestBindingMode_0):
+class TestMode_4di1_bin2_norev(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.binding = probound.binding.BindingMode(
+        self.binding = pyprobound.Mode(
             [
-                probound.conv1d.Conv1d.from_psam(
-                    probound.psam.PSAM(
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
                         alphabet=self.count_table.alphabet,
                         kernel_size=4,
-                        interaction_distance=1,
+                        pairwise_distance=1,
                         score_reverse=False,
                         information_threshold=0.0,
                     ),
                     self.count_table,
-                    train_omega=True,
-                    train_theta=True,
+                    train_posbias=True,
+                    unfold=True,
                     bias_bin=2,
                     one_hot=False,
                 )
@@ -481,152 +468,156 @@ class TestBindingMode_4di1_bin2_norev(TestBindingMode_0):
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_3di1_bin2_norev(TestBindingMode_0):
+class TestMode_3di1_3di1_bin2_norev(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 score_reverse=False,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer1,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2])
+        self.binding = pyprobound.Mode([layer1, layer2])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2floor_3di1_bin2_norev(TestBindingMode_0):
+class TestMode_3di1_mp2floor_3di1_bin2_norev(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 score_reverse=False,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=False
             ),
             layer1,
         )
-        layer3 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer3 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer2,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2, layer3])
+        self.binding = pyprobound.Mode([layer1, layer2, layer3])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3di1_mp2ceil_3di1_bin2_norev(TestBindingMode_0):
+class TestMode_3di1_mp2ceil_3di1_bin2_norev(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        layer1 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=3,
                 out_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 score_reverse=False,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        layer2 = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        layer2 = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=layer1.out_channels, kernel_size=2, ceil_mode=True
             ),
             layer1,
         )
-        layer3 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        layer3 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3,
                 in_channels=2,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             layer2,
-            train_omega=True,
-            train_theta=True,
+            train_posbias=True,
+            unfold=True,
             bias_bin=2,
             one_hot=True,
         )
-        self.binding = probound.binding.BindingMode([layer1, layer2, layer3])
+        self.binding = pyprobound.Mode([layer1, layer2, layer3])
         initialize_binding(self.binding)
 
 
-class TestBindingMode_3_3__3_2_sharedPSAM(unittest.TestCase):
+class TestMode_3_3__3_2_sharedPSAM(unittest.TestCase):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.psam = probound.psam.PSAM(
+        self.psam = pyprobound.layers.PSAM(
             alphabet=self.count_table.alphabet,
             kernel_size=3,
             information_threshold=0.0,
         )
-        bmd0_l1 = probound.conv1d.Conv1d.from_psam(self.psam, self.count_table)
-        bmd0_l2 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        bmd0_l1 = pyprobound.layers.Conv1d.from_psam(
+            self.psam, self.count_table
+        )
+        bmd0_l2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=3, in_channels=2, information_threshold=0.0
             ),
             bmd0_l1,
         )
-        bmd1_l1 = probound.conv1d.Conv1d.from_psam(self.psam, self.count_table)
-        bmd1_l2 = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        bmd1_l1 = pyprobound.layers.Conv1d.from_psam(
+            self.psam, self.count_table
+        )
+        bmd1_l2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 kernel_size=4, in_channels=2, information_threshold=0.0
             ),
             bmd0_l1,
         )
         self.binding_modes = [
-            probound.binding.BindingMode([bmd0_l1, bmd0_l2]),
-            probound.binding.BindingMode([bmd1_l1, bmd1_l2]),
+            pyprobound.Mode([bmd0_l1, bmd0_l2]),
+            pyprobound.Mode([bmd1_l1, bmd1_l2]),
         ]
         for bmd in self.binding_modes:
             initialize_binding(bmd)
@@ -645,41 +636,45 @@ class TestBindingMode_3_3__3_2_sharedPSAM(unittest.TestCase):
             bmd.check_length_consistency()
 
 
-class TestBindingMode_3_3_sharedPSAM(TestBindingMode_3_3__3_2_sharedPSAM):
+class TestMode_3_3_sharedPSAM(TestMode_3_3__3_2_sharedPSAM):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.psam = probound.psam.PSAM(
+        self.psam = pyprobound.layers.PSAM(
             alphabet=self.count_table.alphabet,
             kernel_size=3,
             out_channels=4,
             information_threshold=0.0,
         )
-        bmd0_l1 = probound.conv1d.Conv1d.from_psam(self.psam, self.count_table)
-        bmd0_l2 = probound.conv1d.Conv1d.from_psam(self.psam, bmd0_l1)
-        self.binding_modes = [probound.binding.BindingMode([bmd0_l1, bmd0_l2])]
+        bmd0_l1 = pyprobound.layers.Conv1d.from_psam(
+            self.psam, self.count_table
+        )
+        bmd0_l2 = pyprobound.layers.Conv1d.from_psam(self.psam, bmd0_l1)
+        self.binding_modes = [pyprobound.Mode([bmd0_l1, bmd0_l2])]
         for bmd in self.binding_modes:
             initialize_binding(bmd)
 
 
-class TestBindingMode_3_3_flip_sharedPSAM(TestBindingMode_3_3__3_2_sharedPSAM):
+class TestMode_3_3_flip_sharedPSAM(TestMode_3_3__3_2_sharedPSAM):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.psam = probound.psam.PSAM(
+        self.psam = pyprobound.layers.PSAM(
             alphabet=self.count_table.alphabet,
             kernel_size=3,
             out_channels=4,
             information_threshold=0.0,
         )
-        bmd0_l2 = probound.conv1d.Conv1d(
+        bmd0_l2 = pyprobound.layers.Conv1d(
             psam=self.psam,
             input_shape=self.count_table.seqs.shape[-1] - 2,
             min_input_length=self.count_table.min_read_length - 2,
             max_input_length=self.count_table.max_read_length - 2,
         )
-        bmd0_l1 = probound.conv1d.Conv1d.from_psam(self.psam, self.count_table)
-        self.binding_modes = [probound.binding.BindingMode([bmd0_l1, bmd0_l2])]
+        bmd0_l1 = pyprobound.layers.Conv1d.from_psam(
+            self.psam, self.count_table
+        )
+        self.binding_modes = [pyprobound.Mode([bmd0_l1, bmd0_l2])]
         for bmd in self.binding_modes:
             initialize_binding(bmd)
 

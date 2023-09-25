@@ -1,0 +1,2 @@
+docs/source/_notebooks filter=lfs diff=lfs merge=lfs -text
+docs/source/_notebooks/** filter=lfs diff=lfs merge=lfs -text

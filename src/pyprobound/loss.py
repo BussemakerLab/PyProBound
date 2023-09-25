@@ -1,4 +1,7 @@
-"""Multi-experiment loss"""
+"""Loss components.
+
+Members are explicitly re-exported in pyprobound.
+"""
 import abc
 from collections.abc import Iterable, Iterator
 from typing import Generic, NamedTuple, TypeVar, cast
@@ -9,32 +12,35 @@ from typing_extensions import override
 
 from . import __precision__
 from .base import Component, Spec, Transform
-from .binding import BindingMode
-from .containers import Buffer, TModuleList
-from .cooperativity import BindingCooperativity
+from .containers import TModuleList
+from .cooperativity import Cooperativity
 from .experiment import Experiment
-from .psam import PSAM
-from .rounds import _ARound
-from .table import Batch
+from .layers import PSAM
+from .mode import Mode
+from .rounds import BaseRound
+from .table import CountBatch
 from .utils import get_ordinal, get_split_size
 
 T = TypeVar("T")
 
 
 class Loss(NamedTuple):
+    """A loss value, interpreted as the sum of both elements.
+
+    Attributes:
+        negloglik: The negative log likelihood.
+        regularization: The regularization value.
+    """
+
     negloglik: Tensor
     regularization: Tensor
 
 
 class LossModule(Component, Generic[T]):
-    """Component that calculates loss
+    """Component that calculates loss.
 
-    See https://github.com/pytorch/pytorch/issues/45414"""
-
-    @override
-    @abc.abstractmethod
-    def forward(self, batch: Iterable[T]) -> Loss:
-        """Loss"""
+    See https://github.com/pytorch/pytorch/issues/45414
+    """
 
     @override
     @abc.abstractmethod
@@ -42,16 +48,26 @@ class LossModule(Component, Generic[T]):
         ...
 
     @override
+    @abc.abstractmethod
+    def forward(self, batch: Iterable[T]) -> Loss:
+        """Calculates the loss."""
+
+    @override
     def __call__(self, batch: Iterable[T]) -> Loss:
         return cast(Loss, super().__call__(batch))
 
     @abc.abstractmethod
     def get_setup_string(self) -> str:
-        ...
+        """A description used when printing the output of an optimizer."""
 
 
-class MultiExperimentLoss(LossModule[Batch]):
-    """Sequence of experiments for multitask optimization"""
+class MultiExperimentLoss(LossModule[CountBatch]):
+    """Multitask optimization of multiple count tables with a Poisson loss.
+
+    Attributes:
+        experiments (TModuleList[Experiment]): The experiments to be jointly
+            optimized.
+    """
 
     def __init__(
         self,
@@ -66,42 +82,48 @@ class MultiExperimentLoss(LossModule[Batch]):
         equalize_contribution: bool = False,
         max_split: int | None = None,
     ) -> None:
+        """Initializes the multitask loss from an iterable of experiments.
+
+        Args:
+            experiments: The experiments to be jointly optimized.
+            weights: Multiplier to the NLL of each corresponding experiment.
+            lambda_l2: L2 regularization hyperparameter.
+            lambda_l1: L1 regularization hyperparameter.
+            pseudocount: Scaling factor for Dirichlet-inspired regularization.
+            full_loss: Whether to compute the constant terms of the NLL.
+            exclude_regularization: Keywords used to exclude parameters from
+                regularization.
+            equalize_contribution: Whether to update the weights so that the
+                rescaled losses are constant relative to each other.
+            max_split: Maximum number of sequences scored at a time
+                (lower values reduce memory but increase computation time).
+        """
         super().__init__(name="")
 
-        # store experiment attribute
+        # Store loss attributes
         self.experiments: TModuleList[Experiment] = TModuleList(experiments)
+        self.exclude_regularization = exclude_regularization
+        self.full_loss = full_loss
+        self.equalize_contribution = equalize_contribution
+        self.lambda_l2 = lambda_l2
+        self.lambda_l1 = lambda_l1
+        self.pseudocount = pseudocount
+        self.exponential_bound = exponential_bound
+        self.max_split = max_split
 
-        # store scaling factor for loss of each experiment
+        # Store scaling factor for loss of each experiment
         if weights is None:
             weights = [1 / len(self.experiments)] * len(self.experiments)
-        self.weights: Tensor = Buffer(
-            torch.tensor(weights, dtype=__precision__)
-        )
+        else:
+            weights = list(weights)
+        self.weights = weights
         if len(self.weights) != len(self.experiments):
             raise ValueError(
                 f"Length of weights {len(self.weights)} does not match"
                 f" number of experiments {len(self.experiments)}"
             )
 
-        # store loss attributes
-        self.exclude_regularization = exclude_regularization
-        self.full_loss = full_loss
-        self.equalize_contribution = equalize_contribution
-        self.lambda_l2: Tensor = Buffer(
-            torch.tensor(lambda_l2, dtype=__precision__)
-        )
-        self.lambda_l1: Tensor = Buffer(
-            torch.tensor(lambda_l1, dtype=__precision__)
-        )
-        self.pseudocount: Tensor = Buffer(
-            torch.tensor(pseudocount, dtype=__precision__)
-        )
-        self.exponential_bound: Tensor = Buffer(
-            torch.tensor(exponential_bound, dtype=__precision__)
-        )
-        self.max_split = max_split
-
-        # fill in spec names for each type
+        # Fill in spec names for each type
         type_to_specs: dict[str, dict[Spec, None]] = {}
         for mod in self.modules():
             if isinstance(mod, Spec):
@@ -114,7 +136,7 @@ class MultiExperimentLoss(LossModule[Batch]):
                 if spec.name == "":
                     spec.name = get_ordinal(spec_idx)
 
-        # add ancestry information to component names
+        # Add ancestry information to component names
         for expt_idx, expt in enumerate(self.components()):
             if expt.name == "":
                 expt.name = get_ordinal(expt_idx)
@@ -126,26 +148,27 @@ class MultiExperimentLoss(LossModule[Batch]):
                     for ctrb_idx, ctrb in enumerate(agg.components()):
                         ctrb.name = f"{agg}→{get_ordinal(ctrb_idx)}"
             for mod in expt.modules():
-                if isinstance(mod, BindingMode):
-                    mod.name = f"{expt}→" + "-".join(str(i) for i in mod.key())
-                    for layer_idx, layer in enumerate(mod.layers):
-                        layer.name = (
-                            f"{mod}→Layer{layer_idx}:{layer.layer_spec}←"
+                if isinstance(mod, Mode):
+                    if mod.name == "":
+                        mod.name = f"{expt}→" + "-".join(
+                            str(i) for i in mod.key()
                         )
-                elif isinstance(mod, BindingCooperativity):
+                    for layer_idx, layer in enumerate(mod.layers):
+                        if layer.name == "":
+                            layer.name = (
+                                f"{mod}→Layer{layer_idx}:{layer.layer_spec}←"
+                            )
+                elif isinstance(mod, Cooperativity):
                     if mod.spacing.name == "":
                         mod.spacing.name = (
-                            "-".join(
-                                str(i) for i in mod.spacing.binding_mode_key_0
-                            )
+                            "-".join(str(i) for i in mod.spacing.mode_key_a)
                             + "::"
-                            + "-".join(
-                                str(i) for i in mod.spacing.binding_mode_key_1
-                            )
+                            + "-".join(str(i) for i in mod.spacing.mode_key_b)
                         )
-                    mod.name = f"{expt}→{mod.spacing.name}"
+                    if mod.name == "":
+                        mod.name = f"{expt}→{mod.spacing.name}"
 
-        # check that all names are unique
+        # Check that all names are unique
         specs = [mod for mod in self.modules() if isinstance(mod, Spec)]
         if len(specs) != len(set(str(spec) for spec in specs)):
             raise ValueError("Binding component names are not unique")
@@ -153,7 +176,7 @@ class MultiExperimentLoss(LossModule[Batch]):
             set(expt.name for expt in self.experiments)
         ):
             raise ValueError("Experiment names are not unique")
-        rnds = [mod for mod in self.modules() if isinstance(mod, _ARound)]
+        rnds = [mod for mod in self.modules() if isinstance(mod, BaseRound)]
         if len(rnds) != len(set(rnd.name for rnd in rnds)):
             raise ValueError("Round names are not unique")
 
@@ -178,14 +201,14 @@ class MultiExperimentLoss(LossModule[Batch]):
         )
 
         out.append("\n### Experiments:")
-        for exp in self.experiments:
+        for expt in self.experiments:
             round_format = [
-                str(rnd) if rnd in exp.observed_rounds else f"({str(rnd)})"
-                for rnd in exp.rounds
+                str(rnd) if rnd in expt.observed_rounds else f"({str(rnd)})"
+                for rnd in expt.rounds
             ]
             out.extend(
                 [
-                    f"\tExperiment: {str(exp)}",
+                    f"\tExperiment: {str(expt)}",
                     f"\t\tRounds: [{', '.join(round_format)}]",
                 ]
             )
@@ -201,9 +224,16 @@ class MultiExperimentLoss(LossModule[Batch]):
         return "\n".join(out)
 
     def regularization(self, experiment: Experiment) -> Tensor:
-        """Calculate parameter regularization"""
+        """Calculates parameter regularization.
 
-        # get flattened parameter vector
+        Args:
+            experiment: The experiment containing parameters to be regularized.
+
+        Returns:
+            The regularization value as a scalar tensor.
+        """
+
+        # Get flattened parameter vector
         param_vec = torch.cat(
             [
                 param.flatten()
@@ -216,15 +246,15 @@ class MultiExperimentLoss(LossModule[Batch]):
         )
         regularization = torch.tensor(0.0, device=param_vec.device)
 
-        # add L2 regularization
+        # L2 regularization
         if self.lambda_l2 > 0:
             regularization += self.lambda_l2 * param_vec.square().sum()
 
-        # add L1 regularization
+        # L1 regularization
         if self.lambda_l1 > 0:
             regularization += self.lambda_l1 * param_vec.abs().sum()
 
-        # add Dirichlet regularization
+        # Dirichlet regularization
         if self.pseudocount > 0:
             log_pdf = torch.tensor(0.0, device=param_vec.device)
             for module in self.modules():
@@ -232,11 +262,11 @@ class MultiExperimentLoss(LossModule[Batch]):
                     log_pdf += module.get_dirichlet()
 
             regularization -= log_pdf * (
-                self.pseudocount / torch.sum(experiment.counts_per_round)
+                self.pseudocount / sum(experiment.counts_per_round)
             )
 
-        # add exponential barrier
-        if not torch.isposinf(self.exponential_bound):
+        # Exponential barrier
+        if self.exponential_bound != float("inf"):
             regularization += torch.sum(
                 torch.exp(param_vec - self.exponential_bound)
                 + torch.exp(-param_vec - self.exponential_bound)
@@ -245,16 +275,24 @@ class MultiExperimentLoss(LossModule[Batch]):
         return regularization
 
     @override
-    def forward(self, batch: Iterable[Batch]) -> Loss:
-        """Calculate Poisson Negative Log-Likelihood and regularization"""
+    def forward(self, batch: Iterable[CountBatch]) -> Loss:
+        """Calculates the multitask weighted Poisson NLL and regularization.
+
+        Args:
+            batch: Iterable of count tables to calculate the loss against.
+
+        Returns:
+            A NamedTuple with attributes `negloglik` (the Poisson NLL) and
+            `regularization`, both as scalar tensors.
+        """
 
         neglogliks: list[Tensor] = []
         regularizations: list[Tensor] = []
 
         try:
+            # Calculate loss for each experiment
             for exp, sample in zip(self.experiments, batch, strict=True):
-                # pylint: disable-next=protected-access
-                device = exp._counts_per_round.device
+                device = exp.rounds[0].log_depth.device
                 split_size = get_split_size(
                     self.max_embedding_size(),
                     len(sample.seqs)
@@ -263,6 +301,7 @@ class MultiExperimentLoss(LossModule[Batch]):
                     device,
                 )
 
+                # Split calculation into minibatches of split_size
                 curr_nll = torch.tensor(0.0, device=device)
                 sum_counts = torch.tensor(0.0, device=device)
                 for seqs, target in zip(
@@ -289,12 +328,11 @@ class MultiExperimentLoss(LossModule[Batch]):
                 "Length of experiments and batches may not match?"
             ) from e
 
-        weights = cast(list[float], self.weights.tolist())
+        # Get scaling factors for each experiment
+        weights = self.weights
         if self.equalize_contribution:
             with torch.inference_mode():
-                sum_neglogliks = cast(
-                    float, torch.sum(torch.cat(neglogliks, dim=0)).item()
-                )
+                sum_neglogliks = sum(nll.item() for nll in neglogliks)
                 sum_weights = sum(weights)
                 weights = [
                     (weight / sum_weights)
@@ -302,6 +340,7 @@ class MultiExperimentLoss(LossModule[Batch]):
                     for weight, loss in zip(weights, neglogliks)
                 ]
 
+        # Multiply losses by weights
         negloglik = sum(norm * nll for norm, nll in zip(weights, neglogliks))
         regularization = sum(
             norm * reg for norm, reg in zip(weights, regularizations)

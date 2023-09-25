@@ -1,20 +1,19 @@
-# pylint: disable=invalid-name, missing-class-docstring, missing-module-docstring, protected-access
+# pylint: disable=invalid-name, missing-class-docstring, missing-function-docstring, missing-module-docstring, protected-access, too-few-public-methods
 import unittest
 
 import torch
 import torch.nn.functional as F
 from typing_extensions import override
 
-import probound.layers
-import probound.table
+import pyprobound.layers
 
 from . import make_count_table
 
 
 class BaseTestCases:
     class BaseTestLayer(unittest.TestCase):
-        layer: probound.layers.Layer
-        count_table: probound.table.CountTable
+        layer: pyprobound.layers.Layer
+        count_table: pyprobound.CountTable
 
         def test_out_len_shape(self) -> None:
             num_seqs = len(self.count_table)
@@ -242,8 +241,8 @@ class TestMaxPool1d_3ceil(BaseTestCases.BaseTestLayer):
         self.count_table.seqs = self.count_table.alphabet.embedding(
             self.count_table.seqs
         ).transpose(1, 2)
-        self.layer = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        self.layer = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=len(self.count_table.alphabet.alphabet),
                 kernel_size=3,
                 ceil_mode=True,
@@ -259,8 +258,8 @@ class TestMaxPool1d_3floor(BaseTestCases.BaseTestLayer):
         self.count_table.seqs = self.count_table.alphabet.embedding(
             self.count_table.seqs
         ).transpose(1, 2)
-        self.layer = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        self.layer = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=len(self.count_table.alphabet.alphabet),
                 kernel_size=3,
                 ceil_mode=False,
@@ -277,8 +276,8 @@ class TestMaxPool1d_2ceil(BaseTestCases.BaseTestLayer):
         self.count_table.seqs = self.count_table.alphabet.embedding(
             self.count_table.seqs
         ).transpose(1, 2)
-        self.layer = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        self.layer = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=len(self.count_table.alphabet.alphabet),
                 kernel_size=2,
                 ceil_mode=True,
@@ -295,8 +294,8 @@ class TestMaxPool1d_2floor(BaseTestCases.BaseTestLayer):
         self.count_table.seqs = self.count_table.alphabet.embedding(
             self.count_table.seqs
         ).transpose(1, 2)
-        self.layer = probound.layers.MaxPool1d.from_spec(
-            probound.layers.MaxPool1dSpec(
+        self.layer = pyprobound.layers.MaxPool1d.from_spec(
+            pyprobound.layers.MaxPool1dSpec(
                 in_channels=len(self.count_table.alphabet.alphabet),
                 kernel_size=2,
                 ceil_mode=False,

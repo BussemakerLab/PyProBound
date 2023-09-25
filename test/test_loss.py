@@ -1,4 +1,4 @@
-# pylint: disable=missing-class-docstring, missing-module-docstring
+# pylint: disable=missing-class-docstring, missing-function-docstring, missing-module-docstring
 import json
 import math
 import unittest
@@ -8,13 +8,7 @@ import requests
 import torch
 from typing_extensions import override
 
-import probound.alphabet
-import probound.binding
-import probound.conv1d
-import probound.experiment
-import probound.loss
-import probound.psam
-import probound.table
+import pyprobound
 
 
 class TestDll(unittest.TestCase):
@@ -28,9 +22,9 @@ class TestDll(unittest.TestCase):
             index_col=0,
             sep="\t",
         )
-        alphabet = probound.alphabet.DNA()
+        alphabet = pyprobound.alphabets.DNA()
         self.count_tables = [
-            probound.table.CountTable(
+            pyprobound.CountTable(
                 dataframe,
                 alphabet,
                 left_flank="GAGTTCTACAGTCCGACCTGG",
@@ -41,34 +35,31 @@ class TestDll(unittest.TestCase):
         ]
 
         # specify model
-        nonspecific = probound.psam.NonSpecific(alphabet=alphabet)
-        psam = probound.psam.PSAM(
+        nonspecific = pyprobound.layers.NonSpecific(alphabet=alphabet)
+        psam = pyprobound.layers.PSAM(
             kernel_size=10,
             alphabet=alphabet,
-            interaction_distance=9,
+            pairwise_distance=9,
             normalize=False,
         )
-        conv0d = probound.conv1d.Conv0d.from_nonspecific(
+        conv0d = pyprobound.layers.Conv0d.from_nonspecific(
             nonspecific, self.count_tables[0]
         )
-        conv1d = probound.conv1d.Conv1d.from_psam(psam, self.count_tables[0])
-        binding_modes = [
-            probound.binding.BindingMode([conv0d]),
-            probound.binding.BindingMode([conv1d]),
-        ]
-        i_round = probound.rounds.IRound()
-        b_round = probound.rounds.BRound.from_binding(
+        conv1d = pyprobound.layers.Conv1d.from_psam(psam, self.count_tables[0])
+        binding_modes = [pyprobound.Mode([conv0d]), pyprobound.Mode([conv1d])]
+        i_round = pyprobound.rounds.InitialRound()
+        b_round = pyprobound.rounds.BoundRound.from_binding(
             binding_modes,
             i_round,
             target_concentration=100,
             library_concentration=20,
         )
-        f_round = probound.rounds.FRound.from_round(b_round)
-        experiment = probound.experiment.Experiment(
+        f_round = pyprobound.rounds.UnboundRound.from_round(b_round)
+        experiment = pyprobound.Experiment(
             [i_round, b_round, f_round],
             counts_per_round=self.count_tables[0].counts_per_round,
         )
-        self.model = probound.loss.MultiExperimentLoss(
+        self.model = pyprobound.MultiExperimentLoss(
             [experiment],
             lambda_l2=1e-6,
             pseudocount=200,
@@ -85,22 +76,22 @@ class TestDll(unittest.TestCase):
             ).text
         )
 
-        # fill in log_eta
-        for rnd, log_eta in zip(
+        # fill in log_depth
+        for rnd, log_depth in zip(
             experiment.rounds,
             self.json["coefficients"]["countTable"][0]["h"],
             strict=True,
         ):
-            torch.nn.init.constant_(rnd.log_eta, log_eta)
+            torch.nn.init.constant_(rnd.log_depth, log_depth)
 
-        # fill in log_alpha
+        # fill in log_activity
         torch.nn.init.constant_(
-            b_round.aggregate.contributions[0].log_alpha,
+            b_round.aggregate.contributions[0].log_activity,
             self.json["coefficients"]["bindingModes"][0]["activity"][0][0]
             - math.log(self.count_tables[0].input_shape),
         )
         torch.nn.init.constant_(
-            b_round.aggregate.contributions[1].log_alpha,
+            b_round.aggregate.contributions[1].log_activity,
             self.json["coefficients"]["bindingModes"][1]["activity"][0][0],
         )
 

@@ -1,42 +1,38 @@
-# pylint: disable=invalid-name, missing-class-docstring, missing-module-docstring, protected-access
+# pylint: disable=invalid-name, missing-class-docstring, missing-function-docstring, missing-module-docstring, protected-access
 import unittest
 
 import torch
 from torch import Tensor
 from typing_extensions import override
 
-import probound.conv1d
-import probound.psam
+import pyprobound
 
 from . import make_count_table
 from .test_layers import BaseTestCases
 
 
 def initialize_conv1d(
-    layer: probound.conv1d.Conv1d | probound.conv1d.Conv0d,
+    layer: pyprobound.layers.Conv1d | pyprobound.layers.Conv0d,
 ) -> None:
-    if layer.train_omega:
-        torch.nn.init.normal_(layer.omega)
+    if layer.train_posbias:
+        torch.nn.init.normal_(layer.log_posbias)
 
-    if isinstance(layer, probound.conv1d.Conv1d):
+    if isinstance(layer, pyprobound.layers.Conv1d):
         for param in layer.layer_spec.betas.values():
             torch.nn.init.uniform_(param, -0.5, 0.5)
 
-        if layer.train_theta:
-            torch.nn.init.normal_(layer.theta)
-
 
 class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
-    layer: probound.conv1d.Conv1d
+    layer: pyprobound.layers.Conv1d
 
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=0,
+                pairwise_distance=0,
                 information_threshold=0.0,
             ),
             self.count_table,
@@ -46,7 +42,7 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         initialize_conv1d(self.layer)
 
     def test_embedding_size(self) -> None:
-        self.layer._one_hot = torch.tensor(False)
+        self.layer.one_hot = False
         seq = self.count_table.seqs[0]
         dense_embedding_size = seq.numel() * seq.element_size()
         self.assertEqual(
@@ -55,10 +51,10 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
             "incorrect dense embedding size",
         )
 
-        self.layer._one_hot = torch.tensor(True)
+        self.layer.one_hot = True
         alphabet = self.count_table.alphabet
-        if self.layer.layer_spec.interaction_distance > 0:
-            embedded_seq = alphabet.interaction_embedding(seq)
+        if self.layer.layer_spec.pairwise_distance > 0:
+            embedded_seq = alphabet.pairwise_embedding(seq)
         else:
             embedded_seq = alphabet.embedding(seq)
         onehot_embedding_size = (
@@ -73,20 +69,16 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
     @override
     def test_out_len_finite(self) -> None:
         del self.count_table[100:]
-        self.layer.omega.requires_grad_(False)
-        self.layer.omega.zero_()
-        self.layer.theta.requires_grad_(False)
-        self.layer.theta.zero_()
+        self.layer.log_posbias.requires_grad_(False)
+        self.layer.log_posbias.zero_()
 
         super().test_out_len_finite()
 
     @override
     def test_in_len(self) -> None:
         del self.count_table[100:]
-        self.layer.omega.requires_grad_(False)
-        self.layer.omega.zero_()
-        self.layer.theta.requires_grad_(False)
-        self.layer.theta.zero_()
+        self.layer.log_posbias.requires_grad_(False)
+        self.layer.log_posbias.zero_()
 
         super().test_in_len()
 
@@ -96,9 +88,9 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_dense_v_onehot(self) -> None:
-        self.layer._one_hot = torch.tensor(False)
+        self.layer.one_hot = False
         dense_out = self.layer(self.count_table.seqs)
-        self.layer._one_hot = torch.tensor(True)
+        self.layer.one_hot = True
         onehot_out = self.layer(self.count_table.seqs)
         self.check_nans(dense_out)
         self.check_nans(onehot_out)
@@ -108,11 +100,9 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_forward_v_reverse(self) -> None:
-        self.layer.layer_spec._score_reverse = torch.tensor(True)
-        self.layer.omega.requires_grad_(False)
-        self.layer.omega.zero_()
-        self.layer.theta.requires_grad_(False)
-        self.layer.theta.zero_()
+        self.layer.layer_spec._score_reverse = True
+        self.layer.log_posbias.requires_grad_(False)
+        self.layer.log_posbias.zero_()
 
         rev_seqs = torch.stack(
             [
@@ -128,7 +118,11 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
                 for i in self.count_table.seqs
             ]
         )
-        rev_seqs[rev_seqs < 0] = self.count_table.alphabet.neginf_pad
+        rev_seqs[rev_seqs < 0] = (
+            len(self.count_table.alphabet.alphabet)
+            - rev_seqs[rev_seqs < 0]
+            - 1
+        )
 
         forward_out = self.layer(self.count_table.seqs)
         reverse_out = self.layer(rev_seqs)
@@ -147,13 +141,12 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_conv_v_unfold(self) -> None:
-        self.layer._one_hot = torch.tensor(True)
-        torch.nn.init.zeros_(self.layer.theta)
+        self.layer.one_hot = True
 
         # test conv
-        self.layer.theta.requires_grad_(False)
+        self.layer.unfold = False
         conv1d_out = self.layer(self.count_table.seqs)
-        self.layer.theta.requires_grad_(True)
+        self.layer.unfold = True
         unfold_out = self.layer(self.count_table.seqs)
         self.check_nans(conv1d_out)
         self.check_nans(unfold_out)
@@ -165,10 +158,8 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
     def test_shift_footprint(self) -> None:
         del self.count_table[100:]
         shift = self.layer.bias_bin
-        self.layer.theta[..., :shift, :] = 0
-        self.layer.theta[..., -shift:, :] = 0
-        self.layer.omega[..., :shift] = 0
-        self.layer.omega[..., -shift:] = 0
+        self.layer.log_posbias[..., :shift] = 0
+        self.layer.log_posbias[..., -shift:] = 0
 
         # increment symmetry left
         prev_score = self.layer(self.count_table.seqs)
@@ -303,8 +294,6 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
 
     def test_fix_gauge(self) -> None:
         del self.count_table[100:]
-        self.layer.theta.requires_grad_(False)
-        self.layer.theta.zero_()
 
         prev_score = self.layer(self.count_table.seqs)
         self.layer.layer_spec.fix_gauge()
@@ -313,7 +302,7 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
             torch.allclose(prev_score, curr_score, atol=1e-6),
             "incorrect output after fixing gauge",
         )
-        for dist in range(1, self.layer.layer_spec.interaction_distance + 1):
+        for dist in range(1, self.layer.layer_spec.pairwise_distance + 1):
             for channel in self.layer.layer_spec.get_filter(dist):
                 for pos in channel.transpose(0, -1):
                     mean_0 = pos.mean(dim=0)
@@ -336,11 +325,11 @@ class TestConv1d_4_onehot(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=0,
+                pairwise_distance=0,
                 information_threshold=0.0,
             ),
             self.count_table,
@@ -354,11 +343,11 @@ class TestConv1d_4di1_dense(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
@@ -372,11 +361,11 @@ class TestConv1d_4di1_onehot(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
@@ -390,16 +379,16 @@ class TestConv1d_4di1_bin1_dense(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_theta=True,
-            train_omega=True,
+            unfold=True,
+            train_posbias=True,
             bias_bin=1,
             one_hot=False,
             normalize=False,
@@ -411,16 +400,16 @@ class TestConv1d_4di1_bin2_onehot(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_theta=True,
-            train_omega=True,
+            unfold=True,
+            train_posbias=True,
             bias_bin=2,
             one_hot=True,
             normalize=False,
@@ -432,12 +421,12 @@ class TestConv1d_4di1_out4(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 out_channels=4,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
@@ -451,17 +440,17 @@ class TestConv1d_4di1_bin1_out4(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 out_channels=4,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_theta=True,
-            train_omega=True,
+            unfold=True,
+            train_posbias=True,
             bias_bin=1,
             one_hot=True,
             normalize=False,
@@ -473,17 +462,17 @@ class TestConv1d_4di1_bin2_out4(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv1d.from_psam(
-            probound.psam.PSAM(
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
                 alphabet=self.count_table.alphabet,
                 out_channels=4,
                 kernel_size=4,
-                interaction_distance=1,
+                pairwise_distance=1,
                 information_threshold=0.0,
             ),
             self.count_table,
-            train_theta=True,
-            train_omega=True,
+            unfold=True,
+            train_posbias=True,
             bias_bin=2,
             one_hot=True,
             normalize=False,
@@ -495,14 +484,14 @@ class TestConv1d_4_sharedPSAM(unittest.TestCase):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.psam = probound.psam.PSAM(
+        self.psam = pyprobound.layers.PSAM(
             alphabet=self.count_table.alphabet,
             kernel_size=4,
             information_threshold=0.0,
             normalize=False,
         )
         self.layers = [
-            probound.conv1d.Conv1d.from_psam(
+            pyprobound.layers.Conv1d.from_psam(
                 self.psam, self.count_table, normalize=False
             )
             for _ in range(2)
@@ -525,28 +514,28 @@ class TestConv1d_4_sharedPSAM(unittest.TestCase):
 
 
 class TestConv0d(BaseTestCases.BaseTestLayer):
-    layer: probound.conv1d.Conv0d
+    layer: pyprobound.layers.Conv0d
 
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table(n_seqs=65537)
-        self.layer = probound.conv1d.Conv0d.from_nonspecific(
-            probound.psam.NonSpecific(alphabet=self.count_table.alphabet),
+        self.layer = pyprobound.layers.Conv0d.from_nonspecific(
+            pyprobound.layers.NonSpecific(alphabet=self.count_table.alphabet),
             self.count_table,
-            train_omega=True,
+            train_posbias=True,
         )
         initialize_conv1d(self.layer)
 
     @override
     def test_out_len_finite(self) -> None:
-        self.layer.omega.requires_grad_(False)
-        self.layer.omega.zero_()
+        self.layer.log_posbias.requires_grad_(False)
+        self.layer.log_posbias.zero_()
         super().test_out_len_finite()
 
     @override
     def test_in_len(self) -> None:
-        self.layer.omega.requires_grad_(False)
-        self.layer.omega.zero_()
+        self.layer.log_posbias.requires_grad_(False)
+        self.layer.log_posbias.zero_()
         super().test_in_len()
 
 

@@ -1,4 +1,7 @@
-"""Base class to facilitate buffer registration"""
+"""Base classes for typing and sequential optimization procedure encoding.
+
+Members are explicitly re-exported in pyprobound.
+"""
 from __future__ import annotations
 
 import abc
@@ -14,7 +17,6 @@ from torch import Tensor
 from typing_extensions import override
 
 from . import __version__
-from .containers import TModule
 from .utils import clear_cache
 
 logger = logging.getLogger(__name__)
@@ -22,23 +24,49 @@ ComponentT = TypeVar("ComponentT", bound="Component")
 
 
 class Call(NamedTuple):
+    """A function to be called during optimization.
+
+    Run as `getattr(cmpt, fun)(**kwargs)`.
+
+    Attributes:
+        cmpt: The component to be called.
+        fun: The name of the function to be called.
+        kwargs: Any keyword arguments that will be passed to the function.
+    """
+
     cmpt: Component
     fun: str
     kwargs: dict[str, Any]
 
 
 class Step(NamedTuple):
+    """A series of calls performed in a single step before re-optimizing.
+
+    Attributes:
+        calls: The calls that will be performed together before re-optimizing.
+        greedy: Whether to repeat the calls each time the loss improves.
+    """
+
     calls: list[Call]
     greedy: bool = False
 
 
 class BindingOptim(NamedTuple):
+    """The sequential optimization steps taken to fit a Binding component.
+
+    Attributes:
+        ancestry: A set of tuples where each successive component is a child
+            component of the previous component, from the root to the Binding
+            component to be optimized; one Binding can occur multiple times.
+        steps: The sequential optimization steps to fit a Binding component.
+    """
+
     ancestry: set[tuple[Component, ...]]
     steps: list[Step]
 
     def merge_binding_optim(self) -> None:
-        """Merge unfreezes, redundant steps, redundant calls in a step"""
-        # merge unfreezes
+        """Merge all redundant steps and redundant calls in a step."""
+        # Merge unfreezes
         call_to_step: dict[
             tuple[str, str, frozenset[tuple[str, Any]]], int
         ] = {}
@@ -59,7 +87,7 @@ class BindingOptim(NamedTuple):
                         if step_idx != call_to_step[key]:
                             dropped_call_indices.add(call_idx)
 
-            # remove redundant calls
+            # Remove redundant calls
             calls = {
                 (call.cmpt, call.fun, frozenset(call.kwargs.items())): None
                 for call_idx, call in enumerate(step.calls)
@@ -69,7 +97,7 @@ class BindingOptim(NamedTuple):
                 Call(cmpt, fun, dict(kwargs)) for (cmpt, fun, kwargs) in calls
             ]
 
-        # remove redundant or empty steps
+        # Remove redundant or empty steps
         calls_set: set[
             frozenset[tuple[Component, str, frozenset[tuple[str, Any]]]]
         ] = set()
@@ -90,26 +118,23 @@ class BindingOptim(NamedTuple):
         ]
 
 
-class Component(TModule, abc.ABC):
-    """Module that serves as a component in ProBound
+class Component(torch.nn.Module, abc.ABC):
+    """Module that serves as a component in PyProBound.
+
+    Includes functions for loading from a checkpoint, freezing or unfreezing
+    parameters, and defining sequential optimization procedures.
 
     Attributes:
-        _unfreezable:
-            A Literal of all strings that can be passed to self.unfreeze().
-        _cache_fun:
-            A string representing the name of a function in a
-            module's components whose output the module depends on.
-        _blocking:
-            A dictionary where each key is the name of the function being
-            cached and the value is a set of all components that are
-            currently waiting on that function's output.
-        _caches:
-            A dictionary where each key is the name of the function being
-            cached and the value is a tuple of two optional elements:
-            the pointer to the input and the cache of the output.
+        unfreezable: All possible values that can be passed to unfreeze().
+        _cache_fun: The name of a function in the module's child components
+            that will be cached to avoid recomputation.
+        _blocking: A mapping from the name of the cached function to the
+            parent components waiting on that function's output.
+        _caches: A mapping from the name of the cached function to a tuple of
+            two optional elements, the input pointer and the output cache.
     """
 
-    _unfreezable = Literal["all"]
+    unfreezable = Literal["all"]
     _cache_fun = "forward"
 
     def __init__(self, name: str = "") -> None:
@@ -133,7 +158,13 @@ class Component(TModule, abc.ABC):
         checkpoint: torch.serialization.FILE_LIKE,
         flank_lengths: list[tuple[int, int]],
     ) -> None:
-        """Save model to checkpoint file"""
+        """Saves the model to a file with "state_dict" and "metadata" fields.
+
+        Args:
+            checkpoint: The file where the model will be checkpointed to.
+            flank_lengths: The (left_flank_length, right_flank_length) of each
+                table represented by the model, written to the metadata field.
+        """
         metadata = {
             "time": time.asctime(),
             "version": __version__,
@@ -147,7 +178,14 @@ class Component(TModule, abc.ABC):
     def reload(
         self, checkpoint: torch.serialization.FILE_LIKE
     ) -> dict[str, Any]:
-        """Load model from checkpoint file"""
+        """Loads the model from a checkpoint file.
+
+        Args:
+            checkpoint: The file where the model state_dict was written to.
+
+        Returns:
+            The metadata field of the checkpoint file.
+        """
         checkpoint_state = torch.load(checkpoint)
         checkpoint_state_dict = checkpoint_state["state_dict"]
 
@@ -162,7 +200,7 @@ class Component(TModule, abc.ABC):
             else:
                 set_attr(getattr(obj, names[0]), names[1:], val)
 
-        # update symmetry buffers
+        # Update symmetry buffers
         for key in list(checkpoint_state_dict.keys()):
             if "symmetry" not in key:
                 continue
@@ -170,14 +208,14 @@ class Component(TModule, abc.ABC):
             submod_names = key.split(".")
             set_attr(self, submod_names, checkpoint_param)
 
-        # reshape convolution matrices
+        # Reshape convolution matrices
         for module in self.modules():
             if hasattr(module, "update_params") and callable(
                 module.update_params
             ):
                 module.update_params()  # type: ignore[unreachable]
 
-        # reshape remaining tensors
+        # Reshape remaining tensors
         for key in list(checkpoint_state_dict.keys()):
             checkpoint_param = checkpoint_state_dict[key]
             submod_names = key.split(".")
@@ -197,14 +235,27 @@ class Component(TModule, abc.ABC):
 
     @abc.abstractmethod
     def components(self) -> Iterator[Component]:
-        """Iterator of child components"""
+        """Iterator of child components."""
+
+    def max_embedding_size(self) -> int:
+        """The maximum number of bytes needed to encode a sequence.
+
+        Used for splitting calculations to avoid GPU limits on tensor sizes.
+        """
+        max_sizes = [i.max_embedding_size() for i in self.components()]
+        return max(max_sizes + [1])
 
     def freeze(self) -> None:
-        """Freeze all parameters"""
+        """Turns off gradient calculation for all parameters."""
         for p in self.parameters():
             p.requires_grad_(False)
 
-    def unfreeze(self, parameter: _unfreezable = "all") -> None:
+    def unfreeze(self, parameter: unfreezable = "all") -> None:
+        """Turns on gradient calculation for the specified parameter.
+
+        Args:
+            parameter: Parameter to be unfrozen, defaults to all parameters.
+        """
         if parameter == "all":
             for cmpt in self.components():
                 cmpt.unfreeze("all")
@@ -218,7 +269,22 @@ class Component(TModule, abc.ABC):
         ancestry: tuple[Component, ...] | None = None,
         current_order: dict[tuple[Spec, ...], BindingOptim] | None = None,
     ) -> dict[tuple[Spec, ...], BindingOptim]:
-        """Returns dict mapping Binding.key() to BindingOptim"""
+        """The sequential optimization procedure for all Binding components.
+
+        The optimization procedure is generated recursively through iteration
+        over the child components of each module. All Binding components with
+        the same specification returned from `key()` are trained jointly.
+
+        Args:
+            ancestry: The parent components from the root for which the
+                procedure is being generated to the current component.
+            current_order: Mapping of Binding component specifications to the
+                sequential optimization procedure for those Binding components.
+
+        Returns:
+            The `current_order` updated with the optimization of the current
+            component's children.
+        """
         if ancestry is None:
             ancestry = tuple()
         if current_order is None:
@@ -229,14 +295,15 @@ class Component(TModule, abc.ABC):
             )
         return current_order
 
-    def max_embedding_size(self) -> int:
-        """Maximum number of bytes needed to encode a sequence"""
-        max_sizes = [i.max_embedding_size() for i in self.components()]
-        return max(max_sizes + [1])
-
     def _apply_block(
         self, component: Component | None = None, cache_fun: str | None = None
     ) -> None:
+        """Directs the storage of intermediate results to avoid recomputation.
+
+        Args:
+            component: The parent component applying a block.
+            cache_fun: The function whose output will be cached.
+        """
         if component is not None and cache_fun is not None:
             logger.info(
                 "Applying block of %s on %s.%s", component, self, cache_fun
@@ -251,6 +318,12 @@ class Component(TModule, abc.ABC):
     def _release_block(
         self, component: Component | None = None, cache_fun: str | None = None
     ) -> None:
+        """Releases intermediate results, called after output has been used.
+
+        Args:
+            component: The parent component releasing the block.
+            cache_fun: The function whose output will be released.
+        """
         if component is not None and cache_fun is not None:
             logger.info(
                 "Releasing block of %s on %s.%s", component, self, cache_fun
@@ -268,11 +341,56 @@ class Component(TModule, abc.ABC):
             # pylint: disable-next=protected-access
             cmpt._release_block(self, self._cache_fun)
 
+
+class Transform(Component):
+    """Component that applies a transformation to a tensor.
+
+    Includes improved typing and caching outputs to avoid recomputation for
+    transformations that appear multiple times in a loss module. See
+    https://github.com/pytorch/pytorch/issues/45414 for typing information.
+    """
+
+    def check_length_consistency(self) -> None:
+        """Checks that input lengths of Binding components are consistent.
+
+        Raises:
+            RuntimeError: There is an input mismatch between components.
+        """
+        bindings = {m for m in self.modules() if isinstance(m, Binding)}
+        for binding in bindings:
+            binding.check_length_consistency()
+
+    @override
+    def optim_procedure(
+        self,
+        ancestry: tuple[Component, ...] | None = None,
+        current_order: dict[tuple[Spec, ...], BindingOptim] | None = None,
+    ) -> dict[tuple[Spec, ...], BindingOptim]:
+        # Transforms are applied on sequences from the same experiment
+        #    and binding keys cannot re-occur in an experiment
+        bindings = {m for m in self.modules() if isinstance(m, Binding)}
+        if len(bindings) != len({m.key() for m in bindings}):
+            raise ValueError(f"Non-unique Binding component found in {self}")
+        return super().optim_procedure(ancestry, current_order)
+
+    @override
+    @abc.abstractmethod
+    def forward(self, seqs: Tensor) -> Tensor:
+        """A transformation applied to a sequence tensor."""
+
+    @override
+    def __call__(self, seqs: Tensor) -> Tensor:
+        return cast(Tensor, super().__call__(seqs))
+
     @classmethod
     def cache(
         cls, fun: Callable[[ComponentT, Tensor], Tensor]
     ) -> Callable[[ComponentT, Tensor], Tensor]:
-        """Score batch-first tensor of sequences, cache if necessary"""
+        """Decorator for a function to cache its output.
+
+        The decorator must be applied to every function call whose output will
+        be used in the cached function - generally all forward definitions.
+        """
 
         @functools.wraps(fun)
         def cache_decorator(self: ComponentT, seqs: Tensor) -> Tensor:
@@ -307,41 +425,12 @@ class Component(TModule, abc.ABC):
         return cache_decorator
 
 
-class Transform(Component):
-    """Component that applies a transformation to a tensor
-
-    See https://github.com/pytorch/pytorch/issues/45414"""
-
-    @override
-    @abc.abstractmethod
-    def forward(self, seqs: Tensor) -> Tensor:
-        ...
-
-    @override
-    def __call__(self, seqs: Tensor) -> Tensor:
-        return cast(Tensor, super().__call__(seqs))
-
-    def check_length_consistency(self) -> None:
-        bindings = {m for m in self.modules() if isinstance(m, Binding)}
-        for binding in bindings:
-            binding.check_length_consistency()
-
-    @override
-    def optim_procedure(
-        self,
-        ancestry: tuple[Component, ...] | None = None,
-        current_order: dict[tuple[Spec, ...], BindingOptim] | None = None,
-    ) -> dict[tuple[Spec, ...], BindingOptim]:
-        # transforms are applied on sequences from the same experiment
-        #    and binding keys cannot re-occur in an experiment
-        bindings = {m for m in self.modules() if isinstance(m, Binding)}
-        if len(bindings) != len({m.key() for m in bindings}):
-            raise ValueError(f"Non-unique Binding component found in {self}")
-        return super().optim_procedure(ancestry, current_order)
-
-
 class Spec(Component):
-    """Stores experiment-independent parameters"""
+    """A component that stores experiment-independent parameters.
+
+    The forward implementation should be left to the experiment-specific
+    implementation (either a Layer or Cooperativity component).
+    """
 
     @override
     def components(self) -> Iterator[Component]:
@@ -350,21 +439,47 @@ class Spec(Component):
     def update_binding_optim(
         self, binding_optim: BindingOptim
     ) -> BindingOptim:
+        """Updates a BindingOptim with the specification's optimization steps.
+
+        Args:
+            binding_optim: The parent BindingOptim to be updated.
+
+        Returns:
+            The updated BindingOptim.
+        """
         return binding_optim
 
 
 class Binding(Transform, abc.ABC):
-    """Abstract base class for binding modes and binding cooperativity"""
+    """Abstract base class for binding modes and binding cooperativity.
+
+    Each Binding component links a specification storing experiment-independent
+    parameters with the matching experiment and its specific parameters.
+    """
 
     @abc.abstractmethod
     def key(self) -> tuple[Spec, ...]:
-        """Tuple of Spec used for combining binding components for training"""
+        """The specification of a Binding component.
+
+        All Binding components with the same specification will be optimized
+        together in the sequential optimization procedure.
+        """
 
     @abc.abstractmethod
     def expected_sequence(self) -> Tensor:
-        ...
+        """Uninformative prior of input, used for calculating expectations."""
 
     def expected_log_score(self) -> float:
+        r"""Calculates the expected log score.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+
+        Returns:
+            The expected log score represented as a float.
+        """
         with torch.inference_mode():
             training = self.training
             self.eval()
@@ -374,4 +489,13 @@ class Binding(Transform, abc.ABC):
 
     @abc.abstractmethod
     def score_windows(self, seqs: Tensor) -> Tensor:
-        ...
+        r"""Calculates the score of each window before summing over them.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+
+        Returns:
+            A tensor with the score of each window.
+        """

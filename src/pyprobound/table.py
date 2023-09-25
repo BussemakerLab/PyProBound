@@ -1,12 +1,24 @@
-"""Module for loading and scoring count tables and sequences"""
+"""Module for loading and scoring count tables and sequences.
+
+Members are explicitly re-exported in pyprobound.
+
+A count table consists of sequences and their corresponding counts within each
+selection round. For example, a three-round SELEX table might be:
+AAAA    0   0   2
+ACGA    2   1   0
+CGAA    0   1   5
+TCAG    1   0   0
+
+A table might also contain flanking sequences on the left and right, which are
+prepended and appended, respectively, to every sequence in the table.
+"""
 import abc
-import dataclasses
 import functools
 import gzip
 import itertools
 import os
 from collections.abc import Callable, Iterable, Iterator, Sized
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast
 
 import numpy as np
 import pandas as pd
@@ -18,29 +30,57 @@ from torch.utils.data import DataLoader, Dataset, Sampler, SubsetRandomSampler
 from typing_extensions import override
 
 from . import __precision__
-from .alphabet import Alphabet
-from .base import Component
+from .alphabets import Alphabet
+from .base import Transform
 from .utils import get_split_size
 
 T = TypeVar("T")
-PSAM = Any
 
 
-class Batch(Protocol):
+class CountBatch(Protocol):  # pylint: disable=too-few-public-methods
+    r"""A protocol for a set of rows from a count table.
+
+    Attributes:
+        seqs: A sequence tensor of shape
+            :math:`(\text{minibatch},\text{length})` or
+            :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+        target: A count tensor of shape
+            :math:`(\text{minibatch},\text{rounds})`.
+    """
+
     seqs: Tensor
     target: Tensor
 
 
-@dataclasses.dataclass
-class BatchTuple(Batch):
+class CountBatchTuple(NamedTuple):
+    r"""A NamedTuple for a set of rows from a count table.
+
+    Attributes:
+        seqs: A sequence tensor of shape
+            :math:`(\text{minibatch},\text{length})` or
+            :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+        target: A count tensor of shape
+            :math:`(\text{minibatch},\text{rounds})`.
+    """
+
     seqs: Tensor
     target: Tensor
 
 
 def score(
-    module: Component, batch: Batch, fun: str = "forward", **kwargs: Any
+    module: Transform, batch: CountBatch, fun: str = "forward", **kwargs: Any
 ) -> tuple[Tensor, Tensor]:
-    """(obs, pred) on CPU from batch using specified module function"""
+    """Scores a batch using a chosen function, automatically managing devices.
+
+    Args:
+        module: The Transform used for scoring.
+        batch: The CountBatch containing the sequences and counts to be scored.
+        fun: The name of the function taken from the module for scoring.
+        kwargs: Any keyword arguments passed to the function.
+
+    Returns:
+        A tuple of the observed counts and predicted scores, both on CPU.
+    """
     method: Callable[[Tensor], Tensor] = getattr(module, fun)
     for p in module.parameters():
         device = p.device
@@ -68,7 +108,22 @@ def get_dataframe(
     total_count: int | None = None,
     random_state: int | None = None,
 ) -> DataFrame:
-    """Loads a tab-delimited count table into a dataframe"""
+    """Loads tab-delimited count tables into columns on a Pandas dataframe.
+
+    The input count tables are assumed to have a sequence field and a series
+    of count fields, all separated by a tab character. The first line is
+    automatically skipped if it does not contain a tab character.
+
+    Args:
+        paths: The paths to each count table to be merged into a dataframe.
+        total_count: The total number of counts to be sampled from each column.
+        random_state: A seed used to make the output reproducible if
+            `total_count` is specified.
+
+    Returns:
+        An integer Pandas dataframe with each column representing a sequencing
+        round. Sequences are stored in the index of the dataframe.
+    """
 
     if not isinstance(paths, list):
         raise TypeError(
@@ -107,7 +162,21 @@ def sample_dataframe(
     random_state: int | None = None,
     n_bin: int = 128,
 ) -> tuple[DataFrame, DataFrame]:
-    """Sample from a dataframe evenly by counts per row"""
+    """Randomly samples from a dataframe evenly by enrichment.
+
+    To make validation or test splits representative of the training data, bin
+    sequences by their overall enrichment and sample evenly within each bin.
+
+    Args:
+        dataframe: The input dataframe to be sampled from.
+        frac: The proportion of reads to be sampled from the dataframe.
+        random_state: A seed used to make the output reproducible.
+        n_bin: The bin size used to sample sequences from.
+
+    Returns:
+        A tuple of two dataframes, the first containing `frac` of the original
+        dataframe, the second containing `1 - frac` of the original dataframe.
+    """
     dataframe["Enrichment"] = (dataframe.iloc[:, -1] + 1) / (
         dataframe.iloc[:, 0] + 1
     )
@@ -134,7 +203,16 @@ def sample_counts(
     n_counts: int = 1_000_000,
     random_state: int | None = None,
 ) -> DataFrame:
-    """Randomly split a count table into n different tables"""
+    """Randomly samples `n_counts` total counts from a dataframe.
+
+    Args:
+        dataframe: The dataframe to sample counts from.
+        n_counts: The total number of counts to be included in the output.
+        random_state: A seed used to make the output reproducible.
+
+    Returns:
+        A dataframe with approximately `n_counts` total counts.
+    """
     total = dataframe.iloc[:, 0].sum()
     generator = np.random.default_rng(random_state)
     dataframe.iloc[:, 0] = generator.binomial(
@@ -144,9 +222,22 @@ def sample_counts(
 
 
 class Table(Dataset[T], Generic[T], Sized, abc.ABC):
+    """A generic tensor encoding of a table, should implement flank management.
+
+    Attributes:
+        left_flank_length (int): The length of the prepended sequence.
+        right_flank_length (int): The length of the appended sequence.
+    """
+
     def __init__(
         self, left_flank_length: int = 0, right_flank_length: int = 0
     ) -> None:
+        r"""Initializes the table.
+
+        Args:
+            left_flank_length: The initial length of the prepended sequence.
+            right_flank_length: The initial length of the appended sequence.
+        """
         self.left_flank_length = 0
         self.right_flank_length = 0
         self.set_flank_length(left=left_flank_length, right=right_flank_length)
@@ -154,29 +245,39 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
     @property
     @abc.abstractmethod
     def input_shape(self) -> int:
-        ...
+        """The number of elements in the length dimension."""
 
     @property
     @abc.abstractmethod
     def min_read_length(self) -> int:
-        ...
+        """The minimum number of finite elements in the length dimension."""
 
     @property
     @abc.abstractmethod
     def max_read_length(self) -> int:
-        ...
+        """The maximum number of finite elements in the length dimension."""
 
     @abc.abstractmethod
     def get_setup_string(self) -> str:
-        ...
+        """A description used when printing the output of an optimizer."""
 
     @abc.abstractmethod
     def set_flank_length(self, left: int = 0, right: int = 0) -> None:
-        ...
+        """Updates the length of flanks included in sequences.
+
+        Args:
+            left: The new length of the prepended sequence.
+            right: The new length of the appended sequence.
+        """
 
 
-class CountTable(Table[Batch]):
-    """Loads pandas count table into tensor"""
+class CountTable(Table[CountBatch]):
+    """A tensor encoding of a count table with flank management.
+
+    Attributes:
+        left_flank_length (int): The length of the prepended sequence.
+        right_flank_length (int): The length of the appended sequence.
+    """
 
     def __init__(
         self,
@@ -185,26 +286,50 @@ class CountTable(Table[Batch]):
         transliterate: dict[str, str] | None = None,
         left_flank: str = "",
         right_flank: str = "",
-        left_flank_length: int = 0,  # current left flank to be used
-        right_flank_length: int = 0,  # current right flank to be used
-        max_left_flank_length: int
-        | None = None,  # max length of left flank (default=len(left_flank))
-        max_right_flank_length: int
-        | None = None,  # max length of right flank (default=len(right_flank))
-        zero_pad: bool = False,  # zero-pad all sequences to be the same length
-        min_variable_length: int
-        | None = None,  # min variable length (default=min(df.index.str.len()))
-        max_variable_length: int
-        | None = None,  # max variable length (default=max(df.index.str.len()))
+        left_flank_length: int = 0,
+        right_flank_length: int = 0,
+        max_left_flank_length: int | None = None,
+        max_right_flank_length: int | None = None,
+        zero_pad: bool = False,
+        min_variable_length: int | None = None,
+        max_variable_length: int | None = None,
     ) -> None:
-        # transliterate if necessary
+        r"""Initializes the count table.
+
+        Args:
+            dataframe: The dataframe used to initialize the count table.
+            alphabet: The alphabet used to encode sequences into tensors.
+            transliterate: A mapping of strings to be replaced before encoding.
+            left_flank: The prepended sequence.
+            right_flank: The appended sequence.
+            left_flank_length: The initial length of the prepended sequence.
+            right_flank_length: The initial length of the appended sequence.
+            max_left_flank_length: The maximum allowed length of the prepended
+                sequence.
+            max_right_flank_length: The maximum allowed length of the appended
+                sequence.
+            zero_pad: Whether to append a wildcard character to all sequences
+                to make them the same length.
+            min_variable_length: The minimum possible length of the sequences
+                (needed if using train/test splits on variable length data).
+            max_variable_length: The maximum possible length of the sequences
+                (needed if using train/test splits on variable length data).
+        """
+
+        # Check dataframe
+        if any((dataframe <= 0).all(axis=1)):
+            raise ValueError(
+                "Some sequences do not have a positive count in any round"
+            )
+
+        # Transliterate if necessary
         if transliterate is not None:
             for pattern, replace in transliterate.items():
                 dataframe.index = dataframe.index.str.replace(pattern, replace)
                 left_flank = left_flank.replace(pattern, replace)
                 right_flank = right_flank.replace(pattern, replace)
 
-        # instance attributes
+        # Instance attributes
         self.alphabet = alphabet
         self.left_flank = left_flank
         self.right_flank = right_flank
@@ -216,7 +341,7 @@ class CountTable(Table[Batch]):
         self.max_right_flank_length = max_right_flank_length
         self.zero_padded = zero_pad
 
-        # store variable lengths
+        # Store variable lengths
         self.variable_lengths = (
             torch.tensor(
                 dataframe.index.str.len() - dataframe.index.str.count(r"\+")
@@ -243,11 +368,11 @@ class CountTable(Table[Batch]):
                 "max_variable_length is smaller than"
                 " the longest sequence in dataframe"
             )
-        # needed for omega + theta if train/val/test splitting
+        # Needed for experiment-specific parameters if train/val/test splitting
         self.min_variable_length = min_variable_length
         self.max_variable_length = max_variable_length
 
-        # get dataframe data
+        # Get dataframe data
         self.padding_value = alphabet.get_index["*" if zero_pad else " "]
         self.target = torch.tensor(dataframe.values, dtype=__precision__)
         self.seqs = torch.nn.utils.rnn.pad_sequence(
@@ -261,10 +386,10 @@ class CountTable(Table[Batch]):
             value=self.padding_value,
         ).contiguous()
 
-        # get number of probes per round
+        # Get number of probes per round
         self.counts_per_round = torch.sum(self.target, dim=0)
 
-        # set flank length
+        # Set flank length
         super().__init__(
             left_flank_length=left_flank_length,
             right_flank_length=right_flank_length,
@@ -296,14 +421,18 @@ class CountTable(Table[Batch]):
         )
 
     @override
-    def set_flank_length(
-        self,
-        left: int = 0,  # new length of left flank
-        right: int = 0,  # new length of right flank
-    ) -> None:
-        """Set the length of flanks included in self.seqs"""
+    def get_setup_string(self) -> str:
+        return "\n".join(
+            [
+                f"\t\tMaximum Variable Length: {self.max_variable_length}",
+                f"\t\tLeft Flank Length: {self.left_flank_length}",
+                f"\t\tRight Flank Length: {self.right_flank_length}",
+            ]
+        )
 
-        # check input
+    @override
+    def set_flank_length(self, left: int = 0, right: int = 0) -> None:
+        # Check input
         if left > self.max_left_flank_length:
             raise ValueError(
                 f"left flank length of {left} exceeds"
@@ -319,7 +448,7 @@ class CountTable(Table[Batch]):
         if self.left_flank_length == left and self.right_flank_length == right:
             return
 
-        # trim new flanks to desired lengths
+        # Trim new flanks to desired lengths
         old_left_flank = self.left_flank[
             len(self.left_flank) - self.left_flank_length :
         ]
@@ -333,14 +462,14 @@ class CountTable(Table[Batch]):
         right_flank_tr = self.alphabet.translate(right_flank)
         old_right_flank_tr = self.alphabet.translate(old_right_flank)
 
-        ### update left flank
+        # Update left flank
         if len(left_flank_tr) < len(old_left_flank_tr):
-            # trimming left flank
+            # Trimming left flank
             self.seqs = self.seqs[
                 :, len(old_left_flank_tr) - len(left_flank_tr) :
             ]
         elif left > self.left_flank_length:
-            # extending left flank
+            # Extending left flank
             left_update = left_flank_tr[
                 : len(left_flank_tr) - len(old_left_flank_tr)
             ]
@@ -349,9 +478,9 @@ class CountTable(Table[Batch]):
             )
         self.left_flank_length = left
 
-        ### update right flank
+        # Update right flank
         if len(right_flank_tr) < len(old_right_flank_tr):
-            # trimming right flank
+            # Trimming right flank
             diff = len(old_right_flank_tr) - len(right_flank_tr)
             indices = (
                 self.variable_lengths.expand(len(self), diff)
@@ -367,7 +496,7 @@ class CountTable(Table[Batch]):
             )
             self.seqs = self.seqs[:, :-diff]
         else:
-            # extending right flank
+            # Extending right flank
             diff = len(right_flank_tr) - len(old_right_flank_tr)
             self.seqs = F.pad(self.seqs, (0, diff), value=self.padding_value)
             indices = (
@@ -384,21 +513,8 @@ class CountTable(Table[Batch]):
             )
         self.right_flank_length = right
 
-        # make contiguous
+        # Make contiguous
         self.seqs = self.seqs.contiguous()
-
-    def prob_bound(self) -> Tensor:
-        """Calculates p(b), assuming columns arranged as Input-Bound-Free"""
-        if self.target.shape[1] != 3:
-            raise ValueError("Must have 3 count columns (Input-Bound-Free)")
-        cov_mat = torch.cov(self.target.T, correction=0)
-        cov_dict = {}
-        for i, i_name in enumerate("IBU"):
-            for j, j_name in enumerate("IBU"):
-                cov_dict[i_name + j_name] = cov_mat[i, j]
-        return (
-            cov_dict["BU"] - cov_dict["IB"] + cov_dict["IU"] - cov_dict["UU"]
-        ) / (2 * cov_dict["BU"] - cov_dict["BB"] - cov_dict["UU"])
 
     def __delitem__(self, idx: int | slice | Tensor) -> None:
         inv_idx: list[int] | Tensor
@@ -429,109 +545,21 @@ class CountTable(Table[Batch]):
         self.counts_per_round = torch.sum(self.target, dim=0)
 
     @override
-    def __getitem__(self, idx: int) -> BatchTuple:
-        return BatchTuple(self.seqs[idx], self.target[idx])
+    def __getitem__(self, idx: int) -> CountBatch:
+        return cast(
+            CountBatch, CountBatchTuple(self.seqs[idx], self.target[idx])
+        )
 
     @override
     def __len__(self) -> int:
         return len(self.seqs)
-
-    @override
-    def get_setup_string(self) -> str:
-        return "\n".join(
-            [
-                f"\t\tMaximum Variable Length: {self.max_variable_length}",
-                f"\t\tLeft Flank Length: {self.left_flank_length}",
-                f"\t\tRight Flank Length: {self.right_flank_length}",
-            ]
-        )
-
-    def leverage_dict(
-        self, mincount: int = 1, eps: float = 1e-8
-    ) -> tuple["PSAM", DataFrame]:
-        # TODO: rewrite
-        def get_nddg(mask: Tensor) -> float:
-            target = self.target[mask] / self.target.sum(0, keepdim=True)
-            return -torch.log(
-                torch.max(torch.sum(target[:, 0]), torch.tensor(eps))
-                / torch.max(torch.sum(target[:, -1]), torch.tensor(eps))
-            ).item()
-
-        psam = PSAM(
-            kernel_size=self.max_read_length,
-            alphabet=self.alphabet,
-            interaction_distance=self.max_read_length - 2,
-        )
-        for param in psam.betas.values():
-            torch.nn.init.zeros_(param)
-        leverage_dict = {}
-
-        for pos1 in range(self.max_read_length):
-            for idx1, alpha1 in enumerate(self.alphabet.alphabet):
-                # mono
-                mask1 = self.seqs[:, pos1] == idx1
-                if (
-                    mincount
-                    < torch.sum(self.target[mask1])
-                    < torch.sum(self.counts_per_round) - mincount
-                ):
-                    mask1_nddg = get_nddg(mask1)
-                    leverage_dict[f"{pos1}{alpha1}"] = {
-                        "n": mask1.sum().item(),
-                        "nddg": mask1_nddg,
-                    }
-                else:
-                    mask1_nddg = 0.0
-
-                psam.betas[
-                    PSAM._get_key(  # pylint: disable=protected-access
-                        (torch.tensor(pos1 + 1), torch.tensor(pos1 + 1)), idx1
-                    )
-                ] = torch.nn.Parameter(torch.tensor(mask1_nddg))
-
-                for pos2 in range(pos1 + 1, self.max_read_length):
-                    for idx2, alpha2 in enumerate(self.alphabet.alphabet):
-                        # di
-                        mask2 = self.seqs[:, pos2] == idx2
-                        mask = mask1 & mask2
-                        if (
-                            mincount
-                            < torch.sum(self.target[mask])
-                            < torch.sum(self.counts_per_round) - mincount
-                        ):
-                            mask2_nddg = get_nddg(mask2)
-                            mask_nddg = get_nddg(mask)
-                            # nddg = mask_nddg - mask1_nddg - mask2_nddg
-                            nddg = mask1_nddg + mask2_nddg - mask_nddg
-                            leverage_dict[f"{pos1}{alpha1}-{pos2}{alpha2}"] = {
-                                "n": mask.sum().item(),
-                                "nddg": nddg,
-                            }
-                        else:
-                            nddg = 0.0
-
-                        psam.betas[
-                            PSAM._get_key(  # pylint: disable=protected-access
-                                (
-                                    torch.tensor(pos1 + 1),
-                                    torch.tensor(pos2 + 1),
-                                ),
-                                idx1 * len(self.alphabet.alphabet) + idx2,
-                            )
-                        ] = torch.nn.Parameter(torch.tensor(nddg))
-
-        leverage_dataframe = pd.DataFrame.from_dict(
-            leverage_dict, orient="index", columns=["n", "nddg"]
-        )
-        return psam, leverage_dataframe.reindex(
-            leverage_dataframe.nddg.abs().sort_values(ascending=False).index
-        )
 
 
 class EvenSampler(Sampler[int]):
     """Evenly sample across the range of indices"""
 
     def __init__(self, data_source: Sized, n_bin: int = 128) -> None:
+        super().__init__(data_source=None)
         self.data_source = data_source
         self.n_bin = n_bin
 
@@ -551,26 +579,28 @@ class EvenSampler(Sampler[int]):
         return len(self.data_source)
 
 
-class MultitaskLoader(Generic[T]):
-    """Combines multiple dataloaders for multitask learning"""
+class MultitaskLoader(Generic[T]):  # pylint: disable=too-few-public-methods
+    """Combines multiple dataloaders for multitask learning.
+
+    Attributes:
+        dataloaders: The dataloaders iterated through together.
+    """
 
     def __init__(self, dataloaders: Iterable[DataLoader[T]]) -> None:
         self.dataloaders = dataloaders
         self._longest_loader = max(self.dataloaders, key=len)
 
-    @classmethod
-    def cycle(cls, dataloader: DataLoader[T]) -> Iterator[T]:
-        """Loop infinitely through an iterable"""
-        iterator = iter(dataloader)
+    @staticmethod
+    def _cycle(iterable: Iterable[T]) -> Iterator[T]:
+        """Loop infinitely through an iterable."""
+        iterator = iter(iterable)
         while True:
             try:
                 yield next(iterator)
             except StopIteration:
-                iterator = iter(dataloader)
+                iterator = iter(iterable)
 
     def __iter__(self) -> Iterator[tuple[T, ...]]:
-        """Each item is a tuple of mini-batches from each dataloader"""
-
         if all(len(loader) == 1 for loader in self.dataloaders):
             yield tuple(cast(T, loader.dataset) for loader in self.dataloaders)
             return
@@ -580,7 +610,7 @@ class MultitaskLoader(Generic[T]):
             if loader == self._longest_loader:
                 loaders.append(cast(Iterator[T], loader))
             else:
-                loaders.append(MultitaskLoader.cycle(loader))
+                loaders.append(MultitaskLoader._cycle(loader))
 
         for batch in zip(*loaders):
             yield batch

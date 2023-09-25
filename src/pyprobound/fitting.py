@@ -1,55 +1,92 @@
-"""Nonlinear curve fitting"""
+"""Curve fitting to independent validation data."""
 import abc
 import copy
 import os
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, MutableMapping
+from typing import Any, TypeVar
 
 import numpy as np
 import scipy
 import torch
 from matplotlib import pyplot as plt
 from torch import Tensor
+from torch.utils.data import Sampler
 from typing_extensions import override
 
 from . import __precision__
 from .aggregate import Aggregate
 from .base import Spec
-from .binding import BindingMode
-from .conv1d import Conv1d
-from .cooperativity import BindingCooperativity
+from .cooperativity import Cooperativity
+from .layers import Conv1d
 from .loss import Loss, LossModule
+from .mode import Mode
 from .optimizer import Optimizer
 from .plotting import gnbu_mod, save_image
-from .rounds import _ARound
-from .table import Batch, CountTable
+from .rounds import BaseRound
+from .table import CountBatch, CountTable
 from .utils import avg_pool1d, get_split_size
 
+T = TypeVar("T")
 
-class _Fit(LossModule[Batch], abc.ABC):
-    """Abstract base class for fitting to independent validation data"""
+
+class BaseFit(LossModule[CountBatch], abc.ABC):
+    """Base class for curve fitting to independent validation data."""
 
     scale: torch.nn.Parameter
     intercept: torch.nn.Parameter
 
     def __init__(
         self,
-        rnd: _ARound | Aggregate,
+        rnd: BaseRound | Aggregate,
         dataset: CountTable,
         prediction: Callable[[Tensor], Tensor],
         observation: Callable[[Tensor], Tensor] = lambda x: x,
         update_construct: bool = False,
-        train_omega: bool = False,
-        train_theta: bool = False,
+        train_posbias: bool = False,
         train_hill: bool = False,
         max_split: int | None = None,
+        batch_size: int | None = None,
         checkpoint: str | os.PathLike[str] = "valmodel.pt",
         output: str | os.PathLike[str] = os.devnull,
         device: str | None = None,
+        sampler: type[Sampler[CountBatch]] | None = None,
+        optimizer: type[torch.optim.Optimizer] = torch.optim.LBFGS,
+        optim_args: MutableMapping[str, Any] | None = None,
+        sampler_args: MutableMapping[str, Any] | None = None,
         name: str = "",
     ) -> None:
+        r"""Initializes the curve fitting.
+
+        Args:
+            rnd: A component containing an aggregate of different modes.
+            dataset: A CountTable with 1 to 3 columns, with the first column
+                taken as the target; if 2 columns are provided, the second
+                column is taken as a symmetrical error; if 3 columns are
+                provided, the second is taken as the lower error and the third
+                is taken as the upper error.
+            prediction: A callable applied to the log aggregate :math:`\log Z`.
+            observation: A callable applied to the target :math:`y`.
+            update_construct: Whether to reset experiment-specific parameters.
+            train_posbias: Whether to retrain positional bias profiles
+                :math:`\omega`.
+            train_hill: Whether to train a Hill coefficient.
+            max_split: Maximum number of sequences scored at a time
+                (lower values reduce memory but increase computation time).
+            batch_size: The number of sequences used to optimize the model at a
+                time.
+            checkpoint: The file where the model will be checkpointed to.
+            output: The file where the optimization output will be written to.
+            device: The device on which to perform optimization.
+            sampler: The sampler used when creating the dataloader.
+            optimizer: The optimizer used for optimization.
+            optim_args: Parameters passed to the optimizer.
+                (Defaults to `{"line_search_fn":"strong_wolfe"}` if available).
+            sampler_args: Parameters passed to the sampler.
+            name: A string used to describe the validation dataset.
+        """
         super().__init__()
 
-        # get device
+        # Get device
         if device is None:
             if torch.cuda.is_available():
                 device = "cuda"
@@ -58,36 +95,32 @@ class _Fit(LossModule[Batch], abc.ABC):
             else:
                 device = "cpu"
 
-        # instance attributes
+        # Instance attributes
         self.table = dataset
         self.prediction = prediction
         self.observation = observation
-        self.train_omega = train_omega
-        self.train_theta = train_theta
+        self.train_posbias = train_posbias
         self.max_split = max_split
         self.checkpoint = checkpoint
-        self.output = output
         self.device = torch.device(device)
         self.name = name
 
-        # set up round
+        # Set up round
         self.round = copy.deepcopy(rnd).to(self.device)
         self.round.eval()
         self.round.freeze()
-        if isinstance(self.round, _ARound):
-            self.round.train_eta = False
-            self.round.log_eta.zero_()
+        if isinstance(self.round, BaseRound):
+            self.round.train_depth = False
+            self.round.log_depth.zero_()
         for mod in self.round.modules():
-            if isinstance(mod, BindingMode):
+            if isinstance(mod, Mode):
                 mod.train_hill = train_hill
                 for layer in mod.layers:
                     if isinstance(layer, Conv1d):
-                        layer.train_omega = False
-                        layer.train_theta = False
+                        layer.train_posbias = False
 
                         if update_construct:
-                            layer.omega.zero_()
-                            layer.theta.zero_()
+                            layer.log_posbias.zero_()
 
                 if update_construct:
                     mod.update_read_length(
@@ -100,30 +133,56 @@ class _Fit(LossModule[Batch], abc.ABC):
                         new_max_len=dataset.max_read_length,
                     )
 
-            elif isinstance(mod, BindingCooperativity):
+            elif isinstance(mod, Cooperativity):
                 mod.train_hill = train_hill
-                mod.train_omega = False
+                mod.train_posbias = False
                 if update_construct:
-                    mod.omega.zero_()
+                    mod.log_posbias.zero_()
 
-        # unfreeze experiment-specific parameters only
+        self.round.check_length_consistency()
+
+        # Unfreeze experiment-specific parameters only
         self.round.unfreeze("all")
         for mod in self.round.modules():
             if isinstance(mod, Spec):
                 mod.freeze()
 
-        self.round.check_length_consistency()
-
-    @override
-    def components(self) -> Iterator[_ARound] | Iterator[Aggregate]:
-        yield self.round
+        # Set up optimizer
+        self.optimizer = Optimizer(
+            self,
+            [self.table],
+            epochs=50,
+            patience=3,
+            checkpoint=self.checkpoint,
+            device=self.device.type,
+            output=output,
+            batch_size=batch_size,
+            sampler=sampler,
+            optimizer=optimizer,
+            optim_args=optim_args,
+            sampler_args=sampler_args,
+        )
 
     @override
     def get_setup_string(self) -> str:
         return ""
 
+    @override
+    def components(self) -> Iterator[BaseRound] | Iterator[Aggregate]:
+        yield self.round
+
     def log_aggregate(self, seqs: Tensor) -> Tensor:
-        if isinstance(self.round, _ARound):
+        r"""Calculates the log aggregate :math:`\log Z_i`.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+
+        Returns:
+            The log aggregate tensor of shape :math:`(\text{minibatch},)`.
+        """
+        if isinstance(self.round, BaseRound):
             return self.round.log_aggregate(seqs)
         return self.round(seqs)
 
@@ -131,11 +190,25 @@ class _Fit(LossModule[Batch], abc.ABC):
     def obs_pred(
         self, seqs: Tensor, target: Tensor
     ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None]:
-        pass
+        r"""Calculates the observed and predicted values used for the loss.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+            target: A target tensor of shape
+                :math:`(\text{minibatch},1-3)`
+
+        Returns:
+            A tuple of four tensors of shape :math:`(\text{minibatch},)`, being
+            the transformed observed values, the transformed predicted values,
+            the lower error values, and the upper error values.
+        """
 
     def score(
-        self, batch: Batch
+        self, batch: CountBatch
     ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None]:
+        """Wraps `obs_pred`, automatically managing devices."""
         split_size = get_split_size(
             self.max_embedding_size(),
             len(batch.seqs)
@@ -169,8 +242,8 @@ class _Fit(LossModule[Batch], abc.ABC):
         )
 
     @override
-    def forward(self, batch: Iterable[Batch]) -> Loss:
-        """Calculate mean squared error loss"""
+    def forward(self, batch: Iterable[CountBatch]) -> Loss:
+        """Calculates the mean squared error loss."""
         curr_mse = torch.tensor(0.0, device=self.device)
         numel = torch.tensor(0.0, device=self.device)
 
@@ -210,8 +283,9 @@ class _Fit(LossModule[Batch], abc.ABC):
         kernel: int = 1,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-        save: bool | str = False,
+        save: str | None = None,
     ) -> None:
+        """Plots predicted validation values with error bars and binning."""
         if kernel > 1:
             sorting = torch.argsort(pred, dim=0, descending=True)
             pred = avg_pool1d(pred[sorting], kernel=kernel)
@@ -232,7 +306,7 @@ class _Fit(LossModule[Batch], abc.ABC):
         if pred.min() <= 0 or obs.min() <= 0:
             xlog, ylog = False, False
 
-        # calculate linear regression
+        # Calculate linear regression
         pred_regress = np.log(pred) if xlog else pred.numpy()
         obs_regress = np.log(obs) if ylog else obs.numpy()
         slope, intercept, pearson, _, _ = scipy.stats.linregress(
@@ -240,7 +314,7 @@ class _Fit(LossModule[Batch], abc.ABC):
         )
         spearman = scipy.stats.spearmanr(obs, pred)[0]
 
-        # plot data
+        # Plot data
         scatter_label = f"$r_s$ ={spearman:.3f}, $r$ ={pearson:.3f}"
         if hexbin:
             binplot = axs[0].hexbin(
@@ -267,6 +341,7 @@ class _Fit(LossModule[Batch], abc.ABC):
                         label=scatter_label,
                         alpha=0.5,
                         fmt="o",
+                        capsize=7,
                     )
                 else:
                     for i, (p, o, e, c) in enumerate(
@@ -280,20 +355,21 @@ class _Fit(LossModule[Batch], abc.ABC):
                             alpha=0.5,
                             color=c,
                             fmt="o",
+                            capsize=7,
                         )
             if xlog:
                 plt.xscale("log")
             if ylog:
                 plt.yscale("log")
 
-        # set limits
+        # Set limits
         curr_ax = axs[0] if hexbin else axs
         min_range = min(curr_ax.get_xlim()[0], curr_ax.get_ylim()[0])
         max_range = max(curr_ax.get_xlim()[1], curr_ax.get_ylim()[1])
         curr_ax.set_xlim(min_range, max_range)
         curr_ax.set_ylim(min_range, max_range)
 
-        # plot linear regression
+        # Plot linear regression
         lsrl_x = np.array(
             [
                 min(obs.min().item(), pred.min().item()),
@@ -313,7 +389,7 @@ class _Fit(LossModule[Batch], abc.ABC):
         )
         curr_ax.plot(lsrl_x, lsrl_y, "k--", label=lsrl_label)
 
-        # plot text
+        # Plot text
         title = self.name
         if kernel > 1:
             title += f" ({len(pred):,} bins of n={kernel})"
@@ -327,23 +403,15 @@ class _Fit(LossModule[Batch], abc.ABC):
         curr_ax.set_ylabel(ylabel)
         curr_ax.legend()
 
-        # output
+        # Output
         if isinstance(save, str):
             name = "".join(i for i in self.name if i.isalnum())
-            save_image(save, f"validation_{name}_kernel{kernel}.png")
+            save_image(save + f"validation_{name}_kernel{kernel}.png")
         else:
-            plt.show()
+            plt.show()  # type: ignore[no-untyped-call]
 
     def _fit(self, log: bool = False) -> None:
-        optimizer = Optimizer(
-            self,
-            [self.table],
-            epochs=50,
-            patience=3,
-            checkpoint=self.checkpoint,
-            device=self.device.type,
-            output=self.output,
-        )
+        """Fits experiment-specific parameters to the validation data."""
         multiples = [0.1, 0.316, 1, 3.162, 10]
         best_loss = torch.tensor(float("inf"))
         original_state_dict = copy.deepcopy(self.state_dict())
@@ -366,67 +434,110 @@ class _Fit(LossModule[Batch], abc.ABC):
                     curr_state_dict["intercept"] = (
                         intercept_m * original_state_dict["intercept"]
                     )
-                optimizer.model.load_state_dict(curr_state_dict)
-                loss = optimizer.train_simultaneous()
+                self.optimizer.model.load_state_dict(curr_state_dict)
+                loss = self.optimizer.train_simultaneous()
                 if loss < best_loss:
                     best_loss = loss
                     best_state_dict = copy.deepcopy(
-                        optimizer.model.state_dict()
+                        self.optimizer.model.state_dict()
                     )
 
         self.load_state_dict(best_state_dict)
-        optimizer.save(self.checkpoint)
+        self.optimizer.save(self.checkpoint)
 
-        if self.train_omega or self.train_theta:
+        if self.train_posbias:
             for mod in self.round.modules():
-                if isinstance(mod, BindingMode):
+                if isinstance(mod, Mode):
                     for layer in mod.layers:
-                        if isinstance(layer, Conv1d):
-                            if self.train_omega:
-                                layer.omega.requires_grad_()
-                            if self.train_theta:
-                                layer.theta.requires_grad_()
-                elif isinstance(mod, BindingCooperativity):
-                    if self.train_omega:
-                        mod.omega.requires_grad_()
+                        if getattr(layer, "train_posbias", False):
+                            layer.log_posbias.requires_grad_()
+                elif isinstance(mod, Cooperativity):
+                    if self.train_posbias:
+                        mod.log_posbias.requires_grad_()
 
-            optimizer.train_simultaneous()
-            optimizer.save(self.checkpoint)
+            self.optimizer.train_simultaneous()
+            self.optimizer.save(self.checkpoint)
 
 
-class Fit(_Fit):
-    """Curve fitting to energy data [observation(y) ~ prediction(logZ)]"""
+class Fit(BaseFit):
+    r"""Curve fitting to independent validation data in linear space.
+
+    .. math::
+        \text{observation} (y) \sim m \times \text{prediction} (\log Z) + b
+
+    Attributes:
+        scale (Tensor): The scaling factor :math:`m` (1 if not `train_offset`).
+        intercept (Tensor): The intercept :math:`b` (0 if not `train_offset`).
+    """
 
     def __init__(
         self,
-        rnd: _ARound | Aggregate,
+        rnd: BaseRound | Aggregate,
         dataset: CountTable,
         prediction: Callable[[Tensor], Tensor],
         observation: Callable[[Tensor], Tensor] = lambda x: x,
         update_construct: bool = False,
         train_offset: bool = False,
-        train_omega: bool = False,
-        train_theta: bool = False,
+        train_posbias: bool = False,
         train_hill: bool = False,
         max_split: int | None = None,
+        batch_size: int | None = None,
         checkpoint: str | os.PathLike[str] = "valmodel.pt",
         output: str | os.PathLike[str] = os.devnull,
         device: str | None = None,
+        sampler: type[Sampler[CountBatch]] | None = None,
+        optimizer: type[torch.optim.Optimizer] = torch.optim.LBFGS,
+        optim_args: MutableMapping[str, Any] | None = None,
+        sampler_args: MutableMapping[str, Any] | None = None,
         name: str = "",
     ) -> None:
+        r"""Initializes the curve fitting.
+
+        Args:
+            rnd: A component containing an aggregate of different modes.
+            dataset: A CountTable with 1 to 3 columns, with the first column
+                taken as the target; if 2 columns are provided, the second
+                column is taken as a symmetrical error; if 3 columns are
+                provided, the second is taken as the lower error and the third
+                is taken as the upper error.
+            prediction: A callable applied to the log aggregate :math:`\log Z`.
+            observation: A callable applied to the target :math:`y`.
+            update_construct: Whether to reset experiment-specific parameters.
+            train_offset: Whether to train scaling and intercept parameters.
+            train_posbias: Whether to retrain positional bias profiles
+                :math:`\omega`.
+            train_hill: Whether to train a Hill coefficient.
+            max_split: Maximum number of sequences scored at a time
+                (lower values reduce memory but increase computation time).
+            batch_size: The number of sequences used to optimize the model at a
+                time.
+            checkpoint: The file where the model will be checkpointed to.
+            output: The file where the optimization output will be written to.
+            device: The device on which to perform optimization.
+            sampler: The sampler used when creating the dataloader.
+            optimizer: The optimizer used for optimization.
+            optim_args: Parameters passed to the optimizer.
+                (Defaults to `{"line_search_fn":"strong_wolfe"}` if available).
+            sampler_args: Parameters passed to the sampler.
+            name: A string used to describe the validation dataset.
+        """
         super().__init__(
             rnd,
             dataset,
             prediction=prediction,
             observation=observation,
             update_construct=update_construct,
-            train_omega=train_omega,
-            train_theta=train_theta,
+            train_posbias=train_posbias,
             train_hill=train_hill,
             max_split=max_split,
+            batch_size=batch_size,
             checkpoint=checkpoint,
             output=output,
             device=device,
+            sampler=sampler,
+            optimizer=optimizer,
+            optim_args=optim_args,
+            sampler_args=sampler_args,
             name=name,
         )
         scale = 1.0
@@ -447,6 +558,21 @@ class Fit(_Fit):
     def obs_pred(
         self, seqs: Tensor, target: Tensor
     ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None]:
+        r"""Calculates the observed and predicted values used for the loss.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+            target: A target tensor of shape
+                :math:`(\text{minibatch},1-3)`
+
+        Returns:
+            A tuple of four tensors of shape :math:`(\text{minibatch},)`, being
+            :math:`\text{obs}(y)`, :math:`m \times \text{pred}(\log Z) + b`,
+            :math:`\text{obs}(y - \text{lower error})`,
+            and :math:`\text{obs}(y + \text{lower error})`.
+        """
         obs = self.observation(target[:, 0])
         lower_err = None
         upper_err = None
@@ -471,8 +597,20 @@ class Fit(_Fit):
         ylog: bool = True,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-        save: bool = False,
+        save: str | None = None,
     ) -> None:
+        """Plots predicted validation values with error bars and binning.
+
+        Args:
+            xlabel: The x-axis label.
+            ylabel: The y-axis label.
+            kernel: The bin for average pooling of prediction-sorted sequences.
+            xlog: Whether to plot the x-axis in logarithmic scale.
+            ylog: Whether to plot the y-axis in logarithmic scale.
+            labels: The label for each data point drawn on the plot.
+            colors: The color for each data point drawn on the plot.
+            save: The basename to write the plot to, if provided.
+        """
         with torch.inference_mode():
             obs, pred, lower_err, upper_err = self.score(self.table)
         err = None
@@ -493,42 +631,91 @@ class Fit(_Fit):
         )
 
     def fit(self) -> None:
+        """Fits experiment-specific parameters to the validation data."""
         super()._fit(log=False)
 
 
-class LogFit(_Fit):
-    """Curve fitting to binding data [log observation(y) ~ prediction(logZ)]"""
+class LogFit(BaseFit):
+    r"""Curve fitting to independent validation data in logarithmic space.
+
+    .. math::
+        \log \text{observation} (y) \sim \log \left(
+            \exp \left( m + \text{prediction} (\log Z) \right) + \exp(b)
+        \right)
+
+    Attributes:
+        scale (Tensor): The scaling factor :math:`m` (0 if not `train_offset`).
+        intercept (Tensor): The intercept :math:`b` (-∞ if not `train_offset`).
+    """
 
     def __init__(
         self,
-        rnd: _ARound | Aggregate,
+        rnd: BaseRound | Aggregate,
         dataset: CountTable,
         prediction: Callable[[Tensor], Tensor],
         observation: Callable[[Tensor], Tensor] = lambda x: x,
         update_construct: bool = False,
         train_offset: bool = False,
-        train_omega: bool = False,
-        train_theta: bool = False,
+        train_posbias: bool = False,
         train_hill: bool = False,
         max_split: int | None = None,
+        batch_size: int | None = None,
         checkpoint: str | os.PathLike[str] = "valmodel.pt",
         output: str | os.PathLike[str] = os.devnull,
         device: str | None = None,
+        sampler: type[Sampler[CountBatch]] | None = None,
+        optimizer: type[torch.optim.Optimizer] = torch.optim.LBFGS,
+        optim_args: MutableMapping[str, Any] | None = None,
+        sampler_args: MutableMapping[str, Any] | None = None,
         name: str = "",
     ) -> None:
+        r"""Initializes the curve fitting.
+
+        Args:
+            rnd: A component containing an aggregate of different modes.
+            dataset: A CountTable with 1 to 3 columns, with the first column
+                taken as the target; if 2 columns are provided, the second
+                column is taken as a symmetrical error; if 3 columns are
+                provided, the second is taken as the lower error and the third
+                is taken as the upper error.
+            prediction: A callable applied to the log aggregate :math:`\log Z`.
+            observation: A callable applied to the target :math:`y`.
+            update_construct: Whether to reset experiment-specific parameters.
+            train_offset: Whether to train scaling and intercept parameters.
+            train_posbias: Whether to retrain positional bias profiles
+                :math:`\omega`.
+            train_hill: Whether to train a Hill coefficient.
+            max_split: Maximum number of sequences scored at a time
+                (lower values reduce memory but increase computation time).
+            batch_size: The number of sequences used to optimize the model at a
+                time.
+            checkpoint: The file where the model will be checkpointed to.
+            output: The file where the optimization output will be written to.
+            device: The device on which to perform optimization.
+            sampler: The sampler used when creating the dataloader.
+            optimizer: The optimizer used for optimization.
+            optim_args: Parameters passed to the optimizer.
+                (Defaults to `{"line_search_fn":"strong_wolfe"}` if available).
+            sampler_args: Parameters passed to the sampler.
+            name: A string used to describe the validation dataset.
+        """
         super().__init__(
             rnd,
             dataset,
             prediction=prediction,
             observation=observation,
             update_construct=update_construct,
-            train_omega=train_omega,
-            train_theta=train_theta,
+            train_posbias=train_posbias,
             train_hill=train_hill,
             max_split=max_split,
+            batch_size=batch_size,
             checkpoint=checkpoint,
             output=output,
             device=device,
+            sampler=sampler,
+            optimizer=optimizer,
+            optim_args=optim_args,
+            sampler_args=sampler_args,
             name=name,
         )
         scale = 0.0
@@ -553,6 +740,22 @@ class LogFit(_Fit):
     def obs_pred(
         self, seqs: Tensor, target: Tensor
     ) -> tuple[Tensor, Tensor, Tensor | None, Tensor | None]:
+        r"""Calculates the observed and predicted values used for the loss.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+            target: A target tensor of shape
+                :math:`(\text{minibatch},1-3)`
+
+        Returns:
+            A tuple of four tensors of shape :math:`(\text{minibatch},)`, being
+            :math:`\log\text{obs}(y)`,
+            :math:`\log (\exp(m + \text{prediction} (\log Z) ) + \exp(b))`,
+            :math:`\log\text{obs}(y - \text{lower error})`,
+            and :math:`\log\text{obs}(y + \text{lower error})`.
+        """
         obs = self.observation(target[:, 0])
         lower_err = None
         upper_err = None
@@ -580,8 +783,20 @@ class LogFit(_Fit):
         ylog: bool = True,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-        save: bool = False,
+        save: str | None = None,
     ) -> None:
+        """Plots predicted validation values with error bars and binning.
+
+        Args:
+            xlabel: The x-axis label.
+            ylabel: The y-axis label.
+            kernel: The bin for average pooling of prediction-sorted sequences.
+            xlog: Whether to plot the x-axis in logarithmic scale.
+            ylog: Whether to plot the y-axis in logarithmic scale.
+            labels: The label for each data point drawn on the plot.
+            colors: The color for each data point drawn on the plot.
+            save: The basename to write the plot to, if provided.
+        """
         with torch.inference_mode():
             obs, pred, lower_err, upper_err = self.score(self.table)
             obs = obs.exp()
@@ -606,4 +821,5 @@ class LogFit(_Fit):
         )
 
     def fit(self) -> None:
+        """Fits experiment-specific parameters to the validation data."""
         super()._fit(log=True)

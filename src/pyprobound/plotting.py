@@ -1,13 +1,13 @@
-"""Plotters for sequence logos and diagnostics"""
+"""Module of miscellaneous plotting functions."""
 import copy
 import math
-import os
 import warnings
 from collections.abc import Collection
 from typing import Any, cast
 
 import logomaker
 import matplotlib
+import matplotlib.axes
 import matplotlib.collections
 import matplotlib.figure
 import matplotlib.font_manager
@@ -20,13 +20,11 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from .aggregate import Aggregate, Contribution
-from .binding import BindingMode
-from .conv1d import Conv0d, Conv1d
-from .cooperativity import BindingCooperativity, Spacing
+from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
-from .psam import PSAM
-from .rounds import ERound, _ARound
-from .table import Batch, score
+from .layers import PSAM, Conv0d, Conv1d
+from .rounds import BaseRound, ExponentialRound
+from .table import CountBatch, score
 from .utils import avg_pool1d
 
 matplotlib.rcParams["font.sans-serif"] = "Arial"
@@ -39,7 +37,15 @@ cmap.set_bad(color="gray")
 
 
 def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
-    """Returns sparse count matrix of k-mers in list of sequences"""
+    """Returns a sparse count matrix of k-mers in a list of sequences.
+
+    Args:
+        sequences: The sequences to count the k-mers in.
+        kmer_length: The k-mer length to be counted.
+
+    Returns:
+        A Sparse CSC tensor of the count of each k-mer in each sequence.
+    """
     vocabulary: dict[str, int] = {}
     data: list[int] = []
     indices: list[int] = []
@@ -49,46 +55,55 @@ def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
         for view in range(0, len(seq) - kmer_length + 1):
             kmer = seq[view : view + kmer_length]
 
-            # get key from vocabulary
+            # Get key from vocabulary
             if kmer not in vocabulary:
                 key = len(vocabulary)
                 vocabulary[kmer] = key
             else:
                 key = vocabulary[kmer]
 
-            # running sum of kmers in sequence
+            # Running sum of kmers in sequence
             if key not in count:
                 count[key] = 1
             else:
                 count[key] += 1
 
-        # add to csc initializers
+        # Add to csc initializers
         indptr.append(indptr[-1] + len(count))
         data.extend(count.values())
         indices.extend(count.keys())
 
-    return torch.sparse_csc_tensor(
-        indptr,
-        indices,
-        data,
-        size=(len(vocabulary), len(sequences)),
-        dtype=torch.float32,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return torch.sparse_csc_tensor(
+            indptr,
+            indices,
+            data,
+            size=(len(vocabulary), len(sequences)),
+            dtype=torch.float32,
+        )
 
 
-def save_image(save: str, filename: str) -> None:
-    filename = os.path.join(save, filename)
+def save_image(filename: str) -> None:
+    """Saves an image to a matplotlib plot to a file."""
     plt.savefig(filename, bbox_inches="tight")
     plt.close()
 
 
 def logo(
     psam: PSAM,
-    rev: bool = False,
+    reverse: bool = False,
     fix_gauge: bool = True,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
-    """Plots a sequence logo for the given PSAM"""
+    """Plots a sequence logo for the given PSAM using Logomaker.
+
+    Args:
+        psam: A PSAM to plot into a logo.
+        reverse: Whether to plot the reverse complement.
+        fix_gauge: Whether to call fix_gauge() before plotting the logo.
+        save: The basename to write the plot to, if provided.
+    """
     if psam.out_channels // psam.n_strands != 1:
         raise ValueError("Cannot plot logo for multi-channel PSAMs")
     if psam.alphabet is None:
@@ -103,20 +118,20 @@ def logo(
             NDArray[Any],
             torch.movedim(psam.get_filter(i).detach(), -1, 1)[0].cpu().numpy(),
         )
-        for i in range(psam.interaction_distance + 1)
+        for i in range(psam.pairwise_distance + 1)
     ]
 
-    # binding mode attributes
+    # Binding mode attributes
     in_channels = psam.in_channels
     size = len(psam.symmetry)
     positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
 
-    # set up subplots
-    interaction = psam.interaction_distance > 0
-    width = 7 if interaction else 8
+    # Set up subplots
+    pairwise = psam.pairwise_distance > 0
+    width = 7 if pairwise else 8
     logo_height = width / 4
     colorbar_width = width / 20
-    if interaction:
+    if pairwise:
         fig, axs = plt.subplots(
             nrows=2,
             ncols=2,
@@ -131,13 +146,13 @@ def logo(
     else:
         fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(width, logo_height))
 
-    # set up mononucleotide matrix
+    # Set up monomer matrix
     matrix = matrices[0]
     matrix -= matrix.mean(1, keepdims=True)
-    matrix = np.flip(matrix, axis=(0, 1)) if rev else matrix
+    matrix = np.flip(matrix, axis=(0, 1)) if reverse else matrix
 
     if psam.alphabet is not None:
-        # create sequence logo
+        # Create sequence logo
         dataframe = pd.DataFrame(matrix, columns=psam.alphabet.alphabet)
         dataframe.columns = dataframe.columns.astype(str)
         if "Helvetica" in matplotlib.font_manager.findfont("Helvetica"):
@@ -148,7 +163,7 @@ def logo(
             warnings.simplefilter("ignore")
             energy_logo = logomaker.Logo(
                 dataframe,
-                ax=axs[0, 0] if interaction else axs,
+                ax=axs[0, 0] if pairwise else axs,
                 shade_below=0.5,
                 fade_below=0.5,
                 font_name=font_name,
@@ -162,7 +177,7 @@ def logo(
         energy_logo.ax.xaxis.set_tick_params(pad=-1)
     else:
         max_val = max(np.nanmax(matrix), np.nanmax(-matrix), 1e-8)
-        axs_curr = axs[0, 0] if interaction else axs
+        axs_curr = axs[0, 0] if pairwise else axs
         axs_curr.imshow(
             matrix.T,
             interpolation="none",
@@ -174,13 +189,13 @@ def logo(
         axs_curr.set_ylabel("channels")
         axs_curr.set_xlabel("position")
 
-    # create interaction logo
-    if interaction:
-        # create empty heatmap matrix
+    # Create pairwise logo
+    if pairwise:
+        # Create empty heatmap matrix
         heatmap = np.empty((size * in_channels, size * in_channels))
         heatmap[:] = np.NaN
 
-        # fill heatmap matrix
+        # Fill heatmap matrix
         for dist in range(1, len(matrices)):
             matrix = matrices[dist]
             for pos in range(size - dist):
@@ -190,10 +205,10 @@ def logo(
                     pos
                 ].T
 
-        if rev:
+        if reverse:
             heatmap = np.flipud(np.fliplr(heatmap))
 
-        # draw heatmap
+        # Draw heatmap
         max_val = max(
             1e-15,
             cast(float, np.nanmax(heatmap)),
@@ -207,128 +222,45 @@ def logo(
             vmax=max_val,
         )
 
-        # draw labels
+        # Draw labels
         positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
         labels = np.arange(size)
         axs[1, 0].set_xticks(positions, labels)
         axs[1, 0].set_yticks(positions, labels)
 
-        # draw colorbar
+        # Draw colorbar
         colorbar = plt.cm.ScalarMappable(cmap=cmap)
         colorbar.set_clim(-max_val, max_val)
         fig.colorbar(colorbar, ax=axs[1, 1], fraction=1, pad=0)
 
-    # add title
+    # Add title
     title = psam.name
-    if rev:
+    if reverse:
         title += ", Reversed"
-    if interaction:
+    if pairwise:
         fig.suptitle(title, y=1)
     else:
         plt.title(title)
 
-    # output
+    # Output
     plt.tight_layout()
     if isinstance(save, str):
         name = "".join(i for i in psam.name if i.isalnum())
-        save_image(save, f"logo_{name}{'_rev' if rev else ''}.png")
+        save_image(save + f"logo_{name}{'_rev' if reverse else ''}.png")
     else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]
 
 
-def cooperativity(
-    spacing_matrix: Spacing | BindingCooperativity, save: bool | str = False
-) -> None:
-    fig = plt.figure(figsize=(6.4, 4.8), constrained_layout=True)
-    subfigs = fig.subfigures(1, 2, width_ratios=[1, 0.1])
-    axs = subfigs[0].subplots(
-        spacing_matrix.n_strands,
-        spacing_matrix.n_strands,
-        sharex=True,
-        sharey=True,
-        gridspec_kw={"right": 0.15},
-    )
+def posbias(conv1d: Conv0d | Conv1d, save: str | None = None) -> None:
+    r"""Plots the position bias profile :math:`\omega(x)`.
 
-    # get spacing matrix and axis labels
-    if isinstance(spacing_matrix, Spacing):
-        out = torch.exp(
-            spacing_matrix.get_spacing(
-                spacing_matrix.max_num_windows, spacing_matrix.max_num_windows
-            )
-            .detach()
-            .cpu()
-        )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
-            "-".join([i.name for i in spacing_matrix.binding_mode_key_0])
-        )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
-            "-".join([i.name for i in spacing_matrix.binding_mode_key_1])
-        )
-    else:
-        out = torch.exp(spacing_matrix.get_spacing().detach().cpu()).squeeze()
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
-            spacing_matrix.binding_mode_0.name
-        )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
-            spacing_matrix.binding_mode_1.name
-        )
-
-    # draw subplots
-    max_val = max(np.nanmax(abs(1 - out)), 1e-7)
-    norm = matplotlib.colors.LogNorm(
-        vmin=np.exp(-max_val), vmax=np.exp(max_val)
-    )
-    for n_strand_0, strand_0 in enumerate(
-        torch.chunk(out, spacing_matrix.n_strands, dim=0)
+    Args:
+        conv1d: A component containing a position bias profile.
+        save: The basename to write the plot to, if provided.
+    """
+    for i_out, out in enumerate(
+        conv1d.get_log_posbias().detach().cpu().unbind(1)
     ):
-        for n_strand_1, strand_1 in enumerate(
-            torch.chunk(strand_0, spacing_matrix.n_strands, dim=1)
-        ):
-            ax = cast(plt.Axes, axs[n_strand_0, n_strand_1])
-            ax.imshow(strand_1, interpolation="none", cmap=cmap, norm=norm)
-            ax.xaxis.set_major_locator(
-                matplotlib.ticker.MaxNLocator(integer=True)
-            )
-            ax.yaxis.set_major_locator(
-                matplotlib.ticker.MaxNLocator(integer=True)
-            )
-
-    # label title and axes
-    cast(matplotlib.figure.SubFigure, subfigs[0]).suptitle(
-        f"{spacing_matrix.name} Spacing"
-    )
-    if spacing_matrix.n_strands == 2:
-        cast(plt.Axes, axs[0, 0]).set_ylabel("Forward")
-        cast(plt.Axes, axs[1, 0]).set_ylabel("Reverse")
-        cast(plt.Axes, axs[1, 0]).set_xlabel("Forward")
-        cast(plt.Axes, axs[1, 1]).set_xlabel("Reverse")
-
-    # draw colorbar
-    bar_axs = subfigs[1].add_axes(
-        [0, 0.143, 1, 0.795]  # left  # bottom  # width  # height
-    )
-    bar_axs.axis("off")
-    colorbar = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-    cast(matplotlib.figure.SubFigure, subfigs[1]).colorbar(
-        colorbar, ax=bar_axs, fraction=1, pad=0
-    )
-
-    # output
-    if isinstance(save, str):
-        save_image(save, f"{spacing_matrix}_spacing.png")
-    else:
-        plt.show()
-
-
-def omega(
-    conv1d: Conv0d | Conv1d | BindingMode, save: bool | str = False
-) -> None:
-    if isinstance(conv1d, BindingMode):
-        if not isinstance(conv1d.layers[0], (Conv1d, Conv0d)):
-            raise ValueError("Cannot make plot if first layer is not Conv1d")
-        conv1d = conv1d.layers[0]
-
-    for i_out, out in enumerate(conv1d.get_omega().detach().cpu().unbind(1)):
         out = torch.exp(out[conv1d.min_input_length :])
         rows = int(10 * (out.shape[0] / sum(out.shape)))
         rows = min(8, max(2, rows))
@@ -357,9 +289,9 @@ def omega(
         )
         axs[0].set_xlabel("Position on probe")
         axs[0].set_ylabel("Length")
-        axs[0].set_title(f"{conv1d.layer_spec.name} Omega (O={i_out})")
+        axs[0].set_title(f"{conv1d.layer_spec.name} posbias (O={i_out})")
 
-        # add labels
+        # Add labels
         axs[0].xaxis.set_major_locator(
             matplotlib.ticker.MaxNLocator(integer=True)
         )
@@ -375,7 +307,7 @@ def omega(
             labels = [conv1d.min_input_length + i for i in positions]
             axs[0].set_yticks(positions, labels)
 
-        # draw colorbar
+        # Draw colorbar
         colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         fig.colorbar(
             colorbar,
@@ -385,46 +317,103 @@ def omega(
             location="bottom" if rows < columns else "right",
         )
 
-        # output
+        # Output
         if isinstance(save, str):
-            save_image(save, f"{conv1d}_O{i_out}_omega.png")
+            save_image(save + f"{conv1d}_O{i_out}_posbias.png")
         else:
-            plt.show()
+            plt.show()  # type: ignore[no-untyped-call]
 
 
-def theta(conv1d: Conv1d | BindingMode, save: bool | str = False) -> None:
-    if isinstance(conv1d, BindingMode):
-        if not isinstance(conv1d.layers[0], Conv1d):
-            raise ValueError("Cannot make plot if first layer is not Conv1d")
-        conv1d = conv1d.layers[0]
-    for i_length, length in enumerate(
-        conv1d.get_theta().detach().cpu()[conv1d.min_input_length :],
-        start=conv1d.min_input_length,
+def cooperativity(
+    spacing_matrix: Spacing | Cooperativity, save: str | None = None
+) -> None:
+    r"""Plots the cooperativity position bias :math:`\omega_{a:b}(x^a, x^b)`.
+
+    Args:
+        spacing_matrix: A component containing the cooperativity position bias.
+        save: The basename to write the plot to, if provided.
+    """
+    fig = plt.figure(figsize=(6.4, 4.8), constrained_layout=True)
+    subfigs = fig.subfigures(1, 2, width_ratios=[1, 0.1])
+    axs = subfigs[0].subplots(
+        spacing_matrix.n_strands,
+        spacing_matrix.n_strands,
+        sharex=True,
+        sharey=True,
+        gridspec_kw={"right": 0.15},
+    )
+
+    # Get spacing matrix and axis labels
+    if isinstance(spacing_matrix, Spacing):
+        out = torch.exp(
+            spacing_matrix.get_log_spacing(
+                spacing_matrix.max_num_windows, spacing_matrix.max_num_windows
+            )
+            .detach()
+            .cpu()
+        )
+        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
+            "-".join([i.name for i in spacing_matrix.mode_key_a])
+        )
+        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
+            "-".join([i.name for i in spacing_matrix.mode_key_b])
+        )
+    else:
+        out = torch.exp(
+            spacing_matrix.get_log_spacing().detach().cpu()
+        ).squeeze()
+        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
+            spacing_matrix.mode_a.name
+        )
+        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
+            spacing_matrix.mode_b.name
+        )
+
+    # Draw subplots
+    max_val = max(np.nanmax(abs(1 - out)), 1e-7)
+    norm = matplotlib.colors.LogNorm(
+        vmin=np.exp(-max_val), vmax=np.exp(max_val)
+    )
+    for n_strand_0, strand_0 in enumerate(
+        torch.chunk(out, spacing_matrix.n_strands, dim=0)
     ):
-        for i_out, out in enumerate(length):
-            fig, axs = plt.subplots(figsize=(5, 5), constrained_layout=True)
-            plt.imshow(out.T, interpolation="none", cmap=cmap, aspect="auto")
-            plt.xlabel("Position on probe")
-            plt.ylabel("Position on PSAM")
-            plt.title(
-                f"{conv1d.layer_spec.name} Theta (L={i_length}, O={i_out})"
-            )
-            axs.xaxis.set_major_locator(
+        for n_strand_1, strand_1 in enumerate(
+            torch.chunk(strand_0, spacing_matrix.n_strands, dim=1)
+        ):
+            ax = cast(matplotlib.axes.Axes, axs[n_strand_0, n_strand_1])
+            ax.imshow(strand_1, interpolation="none", cmap=cmap, norm=norm)
+            ax.xaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(integer=True)
             )
-            axs.yaxis.set_major_locator(
+            ax.yaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(integer=True)
             )
 
-            # draw colorbar
-            colorbar = plt.cm.ScalarMappable(cmap=cmap)
-            fig.colorbar(colorbar, location="bottom")
+    # Label title and axes
+    cast(matplotlib.figure.SubFigure, subfigs[0]).suptitle(
+        f"{spacing_matrix.name} Spacing"
+    )
+    if spacing_matrix.n_strands == 2:
+        cast(matplotlib.axes.Axes, axs[0, 0]).set_ylabel("Forward")
+        cast(matplotlib.axes.Axes, axs[1, 0]).set_ylabel("Reverse")
+        cast(matplotlib.axes.Axes, axs[1, 0]).set_xlabel("Forward")
+        cast(matplotlib.axes.Axes, axs[1, 1]).set_xlabel("Reverse")
 
-            # output
-            if isinstance(save, str):
-                save_image(save, f"{conv1d}_L{i_length}O{i_out}_theta.png")
-            else:
-                plt.show()
+    # Draw colorbar
+    bar_axs = subfigs[1].add_axes(
+        [0, 0.143, 1, 0.795]  # left, bottom , width, height
+    )
+    bar_axs.axis("off")
+    colorbar = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    cast(matplotlib.figure.SubFigure, subfigs[1]).colorbar(
+        colorbar, ax=bar_axs, fraction=1, pad=0
+    )
+
+    # Output
+    if isinstance(save, str):
+        save_image(save + f"{spacing_matrix}_spacing.png")
+    else:
+        plt.show()  # type: ignore[no-untyped-call]
 
 
 def _enrichment(
@@ -434,7 +423,17 @@ def _enrichment(
     kernel: int = 1,
     title: str = "",
 ) -> matplotlib.figure.Figure:
-    """Make enrichment scatterplot"""
+    r"""Draws the enrichment scatterplot.
+
+    Args:
+        counts_obs: The observed counts in shape
+            :math:`(\text{minibatch},\text{columns})`.
+        counts_pred: The observed counts in shape
+            :math:`(\text{minibatch},\text{columns})`.
+        columns: The column indices to keep for plotting.
+        kernel: The bin for average pooling of enrichment-sorted sequences.
+        title: The plot title.
+    """
 
     if counts_obs.shape != counts_pred.shape:
         raise ValueError(
@@ -448,7 +447,7 @@ def _enrichment(
             f" counts_obs shape {counts_obs.shape}"
         )
 
-    # setup subplots
+    # Setup subplots
     hexbin = len(columns) <= 2 and len(counts_pred) / kernel > 500
     if hexbin:
         fig, axs = plt.subplots(
@@ -463,27 +462,27 @@ def _enrichment(
         plt.yscale("log")
         plt.xscale("log")
 
-    # plot binned enrichments
+    # Plot binned enrichments
     min_range = float("inf")
     max_range = float("-inf")
     n_bins = 0
     for i in range(len(columns) - 1):
-        # get the columns
+        # Get the columns
         col1 = columns[i]
         col2 = columns[i + 1]
         cols_pred = counts_pred[:, [col1, col2]]
         cols_obs = counts_obs[:, [col1, col2]]
 
-        # remove rows which have 0's for both columns
+        # Remove rows which have 0's for both columns
         nonzero = torch.any(cols_obs > 0, dim=1)
         cols_pred, cols_obs = cols_pred[nonzero], cols_obs[nonzero]
 
-        # sort rows by predicted fold enrichment
+        # Sort rows by predicted fold enrichment
         fold_enr = cols_pred[:, 1] / cols_pred[:, 0]
         sorting = torch.argsort(fold_enr, descending=True)
         cols_pred, cols_obs = cols_pred[sorting], cols_obs[sorting]
 
-        # bin the rows with AvgPool1D
+        # Bin the rows with AvgPool1D
         if kernel > 1:
             eps = 1 / kernel
             cols_pred = avg_pool1d(cols_pred, kernel)
@@ -492,15 +491,15 @@ def _enrichment(
             eps = 1
         n_bins += len(cols_obs)
 
-        # calculate enrichment
+        # Calculate enrichment
         x_pred = (cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)
         y_obs = (cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)
 
-        # update range
+        # Update range
         min_range = min(min_range, x_pred.min().item(), y_obs.min().item())
         max_range = max(max_range, x_pred.max().item(), y_obs.max().item())
 
-        # plot and print statistics
+        # Plot and print statistics
         spearman = scipy.stats.spearmanr(x_pred, y_obs).statistic
         pearson = scipy.stats.pearsonr(x_pred.log(), y_obs.log()).statistic
         rmsle = (x_pred.log() - y_obs.log()).square().mean().sqrt().item()
@@ -523,13 +522,13 @@ def _enrichment(
         else:
             axs.scatter(x_pred, y_obs, label=label, alpha=0.5)
 
-    # make square
+    # Make square
     curr_ax = axs[0] if hexbin else axs
     curr_ax.plot([min_range, max_range], [min_range, max_range], "k--")
     curr_ax.set_xlim(0.9 * min_range, 1.1 * max_range)
     curr_ax.set_ylim(0.9 * min_range, 1.1 * max_range)
 
-    # add title, legend, labels, and colorbar
+    # Add title, legend, labels, and colorbar
     if kernel > 1:
         title += f" ({n_bins:,} bins of n={kernel})"
     else:
@@ -544,12 +543,20 @@ def _enrichment(
 
 def probe_enrichment(
     experiment: Experiment,
-    batch: Batch,
+    batch: CountBatch,
     columns: list[int] | None = None,
     kernel: int = 500,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
-    """Plot enrichment of sequences, binned by predicted enrichment"""
+    """Plots the enrichment of sequences, binned by predicted enrichment.
+
+    Args:
+        experiment: An experiment modeling a selection.
+        batch: A batch corresponding to the provided experiment.
+        columns: The column indices to keep for plotting.
+        kernel: The bin for average pooling of enrichment-sorted sequences.
+        save: The basename to write the plot to, if provided.
+    """
 
     counts_obs, counts_pred = score(
         experiment, batch, fun="log_prediction", target=batch.target
@@ -558,7 +565,7 @@ def probe_enrichment(
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
 
-    # make plot
+    # Make plot
     _enrichment(
         counts_obs,
         counts_pred,
@@ -567,24 +574,32 @@ def probe_enrichment(
         title=f"{experiment.name} Probe-Level Enr.",
     )
 
-    # output
+    # Output
     if isinstance(save, str):
         name = "".join(i for i in experiment.name if i.isalnum())
         cols = "-".join(map(str, columns))
-        save_image(save, f"probeenr_{name}_cols{cols}_kernel{kernel}.png")
+        save_image(save + f"probeenr_{name}_cols{cols}_kernel{kernel}.png")
     else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]
 
 
 def kmer_enrichment(
     experiment: Experiment,
-    batch: Batch,
+    batch: CountBatch,
     columns: list[int] | None = None,
     kmer_length: int = 3,
     kernel: int = 500,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
-    """Plot enrichment of sequences, binned by predicted enrichment"""
+    """Plots the enrichment of k-mers, binned by predicted enrichment.
+
+    Args:
+        experiment: An experiment modeling a selection.
+        batch: A batch corresponding to the provided experiment.
+        columns: The column indices to keep for plotting.
+        kernel: The bin for average pooling of enrichment-sorted k-mers.
+        save: The basename to write the plot to, if provided.
+    """
 
     counts_obs, counts_pred = score(
         experiment, batch, fun="log_prediction", target=batch.target
@@ -596,7 +611,7 @@ def kmer_enrichment(
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
 
-    # make plot
+    # Make plot
     _enrichment(
         counts_obs,
         counts_pred,
@@ -605,173 +620,60 @@ def kmer_enrichment(
         title=f"{experiment.name} {kmer_length}-mer Enr.",
     )
 
-    # output
+    # Output
     if isinstance(save, str):
         name = "".join(i for i in experiment.name if i.isalnum())
         cols = "-".join(map(str, columns))
         save_image(
-            save, f"{kmer_length}merenr_{name}_cols{cols}_kernel{kernel}.png"
+            save + f"{kmer_length}merenr_{name}_cols{cols}_kernel{kernel}.png"
         )
     else:
-        plt.show()
-
-
-def sequence_counts(
-    experiment: Experiment,
-    batch: Batch,
-    column_index: int,
-    sigmas: int = 1,
-    save: bool | str = False,
-) -> None:
-    """Plot predicted vs. observed counts of sequences"""
-
-    # get predicted and observed counts
-    y_obs, x_pred = score(
-        experiment, batch, fun="log_prediction", target=batch.target
-    )
-    x_pred = x_pred.exp()
-    y_obs = y_obs[:, column_index]
-    x_pred = x_pred[:, column_index]
-    nonzero = y_obs > 0
-    x_pred = x_pred[nonzero]
-    y_obs = y_obs[nonzero]
-
-    def a_sol(x: Tensor) -> Tensor:
-        """A solution to x = y +/- stdev*sqrt(y)"""
-        return 0.5 * (
-            2 * x + sigmas**2 + math.sqrt(sigmas**4 + 4 * x * sigmas**2)
-        )
-
-    def b_sol(x: Tensor) -> Tensor:
-        """B solution to x = y +/- stdev*sqrt(y)"""
-        return 0.5 * (
-            2 * x + sigmas**2 - math.sqrt(sigmas**4 + 4 * x * sigmas**2)
-        )
-
-    def lower_bound(x: Tensor) -> Tensor:
-        return x - sigmas * torch.sqrt(x)
-
-    def upper_bound(x: Tensor) -> Tensor:
-        return x + sigmas * torch.sqrt(x)
-
-    fig, axs = plt.subplots(
-        ncols=2, figsize=(5.5, 5), gridspec_kw={"width_ratios": [5, 0.5]}
-    )
-    axs[1].axis("off")
-
-    # plot hexbin and print statistics
-    spearman = scipy.stats.spearmanr(x_pred, y_obs).statistic
-    pearson = scipy.stats.pearsonr(x_pred.log(), y_obs.log()).statistic
-    rmsle = (x_pred.log() - y_obs.log()).square().mean().sqrt().item()
-    label = (
-        rf" $R\in$ [{y_obs.min().item():.2e},{y_obs.max().item():.2e}]"
-        f"\n$r_s$={spearman:.3f}, $r$={pearson:.3f}, RMSLE={rmsle:.3f}"
-    )
-    binplot = axs[0].hexbin(
-        x_pred,
-        y_obs,
-        cmap=gnbu_mod,
-        label=label,
-        bins="log",
-        xscale="log",
-        yscale="log",
-    )
-    fig.colorbar(binplot, ax=axs[1], fraction=1, pad=0)
-
-    # add expectation line
-    min_range = torch.cat((x_pred, y_obs)).min()
-    max_range = torch.cat((x_pred, y_obs)).max()
-    min_observed = y_obs.min()
-    axs[0].plot([min_observed, max_range], [min_observed, max_range], "k--")
-
-    # plot standard deviation
-    pos_ranges = torch.logspace(
-        torch.log10(b_sol(min_observed)).item(),
-        torch.log10(b_sol(max_range)).item(),
-        steps=50,
-    )
-    neg_ranges = torch.logspace(
-        torch.log10(a_sol(min_observed)).item(),
-        torch.log10(a_sol(max_range)).item(),
-        steps=50,
-    )
-    y_obs = torch.maximum(x_pred, torch.ones(1))
-    frac_inside = sum(
-        (y_obs > lower_bound(x_pred)) & (y_obs < upper_bound(x_pred))
-    ) / len(y_obs)
-    lines = matplotlib.collections.LineCollection(
-        (
-            list(zip(pos_ranges, upper_bound(pos_ranges))),
-            list(zip(neg_ranges, lower_bound(neg_ranges))),
-        ),
-        label=rf"{sigmas}$\sigma$ ({frac_inside:.1%} within)",
-        linestyle="dashed",
-        color="red",
-    )
-    axs[0].add_collection(lines)
-
-    # make square
-    axs[0].set_ylim(0.9 * min_observed, 1.1 * max_range)
-    axs[0].set_xlim(
-        0.9
-        * torch.cat(
-            (min_range.unsqueeze(0), pos_ranges, upper_bound(pos_ranges))
-        ).min(),
-        1.1
-        * torch.cat(
-            (max_range.unsqueeze(0), neg_ranges, lower_bound(neg_ranges))
-        ).max(),
-    )
-
-    # add title, legend, labels
-    title = (
-        f"{experiment.name} Col {column_index} Probe-Level Counts"
-        f" ({len(x_pred):,} probes)"
-    )
-    axs[0].set_title(title)
-    axs[0].set_xlabel("Predicted Count")
-    axs[0].set_ylabel("Observed Count")
-    axs[0].legend(loc="upper left")
-
-    # output
-    if isinstance(save, str):
-        name = "".join(i for i in experiment.name if i.isalnum())
-        save_image(save, f"counts_{name}_col{column_index}.png")
-    else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]
 
 
 def kd_consistency(
     experiment: Experiment,
     i_index: int,
     b_index: int,
-    f_index: int,
-    batch: Batch,
+    u_index: int,
+    batch: CountBatch,
     kernel: int = 500,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
-    # get Kd's
+    """Plots the bound and unbound fractions, binned by predicted Kd.
+
+    Args:
+        experiment: An experiment modeling a Kd-seq selection.
+        i_index: The index of the input round.
+        b_index: The index of the BoundRound.
+        u_index: The index of the UnboundRound.
+        batch: A batch corresponding to the provided experiment.
+        kernel: The bin for average pooling of Kd-sorted sequences.
+        save: The basename to write the plot to, if provided.
+    """
+
+    # Get Kd's
     i_round = experiment.rounds[i_index]
     b_round = experiment.rounds[b_index]
-    f_round = experiment.rounds[f_index]
-    free_protein = experiment.free_protein(i_index, b_index, f_index)
+    u_round = experiment.rounds[u_index]
+    free_protein = experiment.free_protein(i_index, b_index, u_index)
     k_a = torch.exp(
         score(b_round, batch, "log_aggregate")[1] - math.log(free_protein)
     )
 
-    # get counts of all rounds
+    # Get counts of all rounds
     counts_obs, counts_pred = score(
         experiment, batch, fun="log_prediction", target=batch.target
     )
     counts_pred = counts_pred.exp()
 
-    # sort by Ka
+    # Sort by Ka
     sorting = torch.argsort(k_a)
     k_a = k_a[sorting]
     counts_obs = counts_obs[sorting]
     counts_pred = counts_pred[sorting]
 
-    # bin
+    # Bin
     if kernel > 1:
         k_a = avg_pool1d(k_a, kernel)
         counts_obs = avg_pool1d(counts_obs, kernel)
@@ -780,23 +682,23 @@ def kd_consistency(
     else:
         eps = 1.0
 
-    # calculate bound fractions
+    # Calculate bound fractions
     pred_bound = (
         (counts_pred[:, b_index] + eps) / (counts_pred[:, i_index] + eps)
-    ) * torch.exp(i_round.log_eta - b_round.log_eta).detach().cpu()
+    ) * torch.exp(i_round.log_depth - b_round.log_depth).detach().cpu()
     obs_bound = (
         (counts_obs[:, b_index] + eps) / (counts_obs[:, i_index] + eps)
-    ) * torch.exp(i_round.log_eta - b_round.log_eta).detach().cpu()
+    ) * torch.exp(i_round.log_depth - b_round.log_depth).detach().cpu()
 
-    # calculate free fractions
-    pred_free = (
-        (counts_pred[:, f_index] + eps) / (counts_pred[:, i_index] + eps)
-    ) * torch.exp(i_round.log_eta - f_round.log_eta).detach().cpu()
-    obs_free = (
-        (counts_obs[:, f_index] + eps) / (counts_obs[:, i_index] + eps)
-    ) * torch.exp(i_round.log_eta - f_round.log_eta).detach().cpu()
+    # Calculate free fractions
+    pred_unbound = (
+        (counts_pred[:, u_index] + eps) / (counts_pred[:, i_index] + eps)
+    ) * torch.exp(i_round.log_depth - u_round.log_depth).detach().cpu()
+    obs_unbound = (
+        (counts_obs[:, u_index] + eps) / (counts_obs[:, i_index] + eps)
+    ) * torch.exp(i_round.log_depth - u_round.log_depth).detach().cpu()
 
-    # plot
+    # Plot
     fig, axs = plt.subplots(
         2, 1, figsize=(5, 5), constrained_layout=True, sharex=True
     )
@@ -810,12 +712,14 @@ def kd_consistency(
     axs[0].set_yscale("log")
     axs[0].set_ylabel("Bound fraction")
 
-    rmse_free = (pred_free - obs_free).square().mean().sqrt().item()
-    axs[1].scatter(k_a, obs_free, alpha=0.5, label=f"RMSE={rmse_free:.3f}")
-    axs[1].plot(k_a, pred_free, "k--")
+    rmse_unbound = (pred_unbound - obs_unbound).square().mean().sqrt().item()
+    axs[1].scatter(
+        k_a, obs_unbound, alpha=0.5, label=f"RMSE={rmse_unbound:.3f}"
+    )
+    axs[1].plot(k_a, pred_unbound, "k--")
     axs[1].legend(loc="upper right")
     axs[1].set_yscale("log")
-    axs[1].set_ylabel("Free fraction")
+    axs[1].set_ylabel("Unbound fraction")
 
     title = r"$K_D$ Model Consistency"
     if kernel > 1:
@@ -824,32 +728,41 @@ def kd_consistency(
         title += f" ({len(counts_obs):,} probes)"
     fig.suptitle(title)
 
-    # output
+    # Output
     if isinstance(save, str):
         name = "".join(i for i in experiment.name if i.isalnum())
-        columns = "-".join(str(i) for i in (i_index, b_index, f_index))
-        save_image(save, f"kd_consistency_{name}_col{columns}.png")
+        columns = "-".join(str(i) for i in (i_index, b_index, u_index))
+        save_image(save + f"kd_consistency_{name}_col{columns}.png")
     else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]
 
 
 def keff_consistency(
     experiment: Experiment,
-    batch: Batch,
+    batch: CountBatch,
     columns: list[int] | None = None,
     kernel: int = 500,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
+    """Plots the modified fraction, binned by predicted Kd.
+
+    Args:
+        experiment: An experiment modeling a Kinase-seq selection.
+        batch: A batch corresponding to the provided experiment.
+        columns: The column indices to keep for plotting.
+        kernel: The bin for average pooling of Kd-sorted sequences.
+        save: The basename to write the plot to, if provided.
+    """
     if columns is None:
         columns = [
             i
             for i, rnd in enumerate(experiment.rounds)
-            if isinstance(rnd, ERound)
+            if isinstance(rnd, ExponentialRound)
         ]
 
     _, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
 
-    # get counts of all rounds
+    # Get counts of all rounds
     counts_obs, counts_pred = score(
         experiment, batch, fun="log_prediction", target=batch.target
     )
@@ -857,7 +770,7 @@ def keff_consistency(
 
     n_bins = 0
     for e_col in columns:
-        # get rounds
+        # Get rounds
         e_round = experiment.rounds[e_col]
         i_col = next(
             i
@@ -866,26 +779,26 @@ def keff_consistency(
         )
         i_round = experiment.rounds[i_col]
 
-        # get k_eff
+        # Get k_eff
         k_eff = torch.exp(score(e_round, batch, "log_aggregate")[1])
 
-        # get counts
+        # Get counts
         cols_pred = counts_pred[:, [i_col, e_col]]
         cols_obs = counts_obs[:, [i_col, e_col]]
 
-        # remove rows with no counts
+        # Remove rows with no counts
         nonzero = torch.any(cols_obs > 0, dim=1)
         cols_pred = cols_pred[nonzero]
         cols_obs = cols_obs[nonzero]
         k_eff = k_eff[nonzero]
 
-        # sort by k_eff
+        # Sort by k_eff
         sorting = torch.argsort(k_eff)
         k_eff = k_eff[sorting]
         cols_obs = cols_obs[sorting]
         cols_pred = cols_pred[sorting]
 
-        # bin
+        # Bin
         if kernel > 1:
             k_eff = avg_pool1d(k_eff, kernel)
             cols_obs = avg_pool1d(cols_obs, kernel)
@@ -895,15 +808,15 @@ def keff_consistency(
             eps = 1.0
         n_bins += len(cols_obs)
 
-        # calculate bound fractions
+        # Calculate bound fractions
         pred_modified = (
             (cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)
-        ) * torch.exp(i_round.log_eta - e_round.log_eta).detach().cpu()
+        ) * torch.exp(i_round.log_depth - e_round.log_depth).detach().cpu()
         obs_modified = (
             (cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)
-        ) * torch.exp(i_round.log_eta - e_round.log_eta).detach().cpu()
+        ) * torch.exp(i_round.log_depth - e_round.log_depth).detach().cpu()
 
-        # plot
+        # Plot
         rmse = (pred_modified - obs_modified).square().mean().sqrt().item()
         label = f"{e_round} RMSE={rmse:.3f}"
         axs.scatter(k_eff, obs_modified, alpha=0.5, label=label)
@@ -911,7 +824,7 @@ def keff_consistency(
         axs.set_xscale("log")
         axs.set_yscale("log")
         axs.set_xlabel(r"Predicted $k_{\mathrm{eff}}$")
-        axs.set_ylabel("Bound fraction")
+        axs.set_ylabel("Modified fraction")
         axs.set_title(r"$k_{\mathrm{eff}}$ Model Consistency")
         axs.legend(loc="lower right")
 
@@ -922,22 +835,29 @@ def keff_consistency(
         title += f" ({n_bins:,} probes)"
     axs.set_title(title)
 
-    # output
+    # Output
     if isinstance(save, str):
         name = "".join(i for i in experiment.name if i.isalnum())
         cols = "-".join(map(str, columns))
-        save_image(save, f"kd_consistency_{name}_cols{cols}.png")
+        save_image(save + f"kd_consistency_{name}_cols{cols}.png")
     else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]
 
 
 def contribution(
-    rnd: _ARound | Aggregate,
-    batch: Batch,
+    rnd: BaseRound | Aggregate,
+    batch: CountBatch,
     kernel: int = 500,
-    save: bool | str = False,
+    save: str | None = None,
 ) -> None:
-    """Plot binding mode contributions as a function of selection strength"""
+    """Plots the predicted relative contribution of every Binding component.
+
+    Args:
+        rnd: A component containing an aggregate of different modes.
+        batch: A batch corresponding to the provided experiment.
+        kernel: The bin for average pooling of Kd-sorted sequences.
+        save: The basename to write the plot to, if provided.
+    """
 
     _, log_aggregate = score(
         rnd,
@@ -957,18 +877,18 @@ def contribution(
         2, 1, figsize=(5, 6), gridspec_kw={"height_ratios": (1, 4)}
     )
 
-    # sort
+    # Sort
     sorting = torch.argsort(log_aggregate, dim=0, descending=False)
     log_aggregate = log_aggregate[sorting]
     bmd_contributions = bmd_contributions[sorting]
     bmd_contributions -= bmd_contributions.logsumexp(dim=1, keepdim=True)
 
-    # bin
+    # Bin
     bin_contributions = avg_pool1d(torch.exp(bmd_contributions), kernel)
     bin_partition = avg_pool1d(torch.exp(log_aggregate), kernel)
     x_min, x_max = torch.min(bin_partition), torch.max(bin_partition)
 
-    # stack plot
+    # Stack plot
     labels = [
         f"{name} ({contribution:.0%})"
         for name, contribution in zip(
@@ -983,7 +903,7 @@ def contribution(
     axs[1].set_ylim((0, 1))
     axs[1].set_xlim((x_min, x_max))
 
-    # density plot
+    # Density plot
     xrange = np.logspace(
         torch.log10(x_min),
         torch.log10(x_max),
@@ -995,7 +915,7 @@ def contribution(
     axs[0].set_xlim((x_min, x_max))
     axs[0].get_xaxis().set_visible(False)
 
-    # add title
+    # Add title
     title = f"{rnd} Mode Contributions"
     if kernel > 1:
         title += f" ({len(bin_partition):,} bins of n={kernel})"
@@ -1004,9 +924,9 @@ def contribution(
     axs[0].set_title(title)
     fig.align_ylabels(axs)
 
-    # output
+    # Output
     if isinstance(save, str):
         name = "".join(i for i in rnd.name if i.isalnum())
-        save_image(save, f"contribution_{name}_kernel{kernel}.png")
+        save_image(save + f"contribution_{name}_kernel{kernel}.png")
     else:
-        plt.show()
+        plt.show()  # type: ignore[no-untyped-call]

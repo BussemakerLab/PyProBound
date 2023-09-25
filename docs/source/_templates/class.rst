@@ -5,19 +5,17 @@
 .. autoclass:: {{ objname }}
    :members:
    :show-inheritance:
-   :inherited-members:
    :member-order: bysource
    :undoc-members:
 
-   {% block methods %}
    .. automethod:: __init__
-
+   
+   {% block methods %}
    {% if methods %}
    .. rubric:: {{ _('Methods') }}
-
    .. autosummary::
    {% for item in methods %}
-      ~{{ name }}.{{ item }}
+      ~{{ objname }}.{{ item }}
    {%- endfor %}
    {% endif %}
    {% endblock %}
@@ -25,10 +23,11 @@
    {% block attributes %}
    {% if attributes %}
    .. rubric:: {{ _('Attributes') }}
-
    .. autosummary::
    {% for item in attributes %}
       ~{{ name }}.{{ item }}
    {%- endfor %}
    {% endif %}
    {% endblock %}
+
+   .. rubric:: {{ _('Non-Inherited Members') }}
