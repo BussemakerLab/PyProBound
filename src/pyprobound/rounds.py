@@ -360,21 +360,25 @@ class UnboundRound(Round):
     """
 
     @classmethod
-    def from_round(cls, base_round: Round, name: str = "") -> Self:
-        """Creates a new instance from the round modeling the bound fraction.
+    def from_round(
+        cls, base_round: Round, train_depth: bool = True, name: str = ""
+    ) -> Self:
+        r"""Creates a new instance from the round modeling the bound fraction.
 
-        The resulting round has the same `aggregate`, `reference_round`, and
-        `train_depth` parameters as `base_round`.
+        The resulting round has the same `aggregate` and `reference_round`
+        as `base_round`.
 
         Args:
             base_round: The round modeling the bound fraction.
+            train_depth: Whether to train the sequencing depth :math:`\eta`.
             name: A string used to describe the round.
         """
         return cls(
             base_round.aggregate,
             base_round.reference_round,
-            train_depth=base_round.train_depth,
-            library_concentration=base_round.library_concentration,
+            train_depth=train_depth,
+            # pylint: disable-next=protected-access
+            library_concentration=base_round._library_concentration,
             name=name,
         )
 
@@ -560,16 +564,19 @@ class ExponentialRound(Round):
         cls,
         base_round: Self,
         reference_round: BaseRound | None = None,
+        train_depth: bool = True,
         target_concentration: float = 1,
         name: str = "",
     ) -> Self:
-        """Creates a new instance from another round at a different timepoint.
+        r"""Creates a new instance from another round at a different timepoint.
 
-        The resulting round has the same `aggregate`, `delta` as `base_round`.
+        The resulting round has the same `aggregate` and `delta` as
+        `base_round`.
 
         Args:
             base_round: The binding components driving enrichment.
             reference_round: The previous round used in cumulative enrichment.
+            train_depth: Whether to train the sequencing depth :math:`\eta`.
             name: A string used to describe the round.
         """
         if reference_round is None:
@@ -581,7 +588,7 @@ class ExponentialRound(Round):
                 target_concentration=target_concentration,
             ),
             reference_round,
-            train_depth=base_round.train_depth,
+            train_depth=train_depth,
             delta=base_round.delta.item(),
             train_delta=base_round.train_delta,
             name=name,
