@@ -341,19 +341,21 @@ class CountTable(Table[CountBatch]):
         self.max_right_flank_length = max_right_flank_length
         self.zero_padded = zero_pad
 
+        # Get dataframe data
+        self.padding_value = alphabet.get_index["*" if zero_pad else " "]
+        self.target = torch.tensor(dataframe.values, dtype=__precision__)
+        self.seqs = torch.nn.utils.rnn.pad_sequence(
+            [alphabet.translate(seq) for seq in dataframe.index],
+            batch_first=True,
+            padding_value=self.padding_value,
+        )
+
         # Store variable lengths
-        self.variable_lengths = (
-            torch.tensor(
-                dataframe.index.str.len() - dataframe.index.str.count(r"\+")
-            ).unsqueeze(1)
-            // alphabet.monomer_length
-        )
-        curr_min_variable_length = (
-            self.variable_lengths.min().item() // alphabet.monomer_length
-        )
-        curr_max_variable_length = (
-            self.variable_lengths.max().item() // alphabet.monomer_length
-        )
+        self.variable_lengths = torch.sum(
+            self.seqs != self.alphabet.neginf_pad, dim=1
+        ).unsqueeze(-1)
+        curr_min_variable_length = self.variable_lengths.min().item()
+        curr_max_variable_length = self.variable_lengths.max().item()
         if min_variable_length is None:
             min_variable_length = cast(int, curr_min_variable_length)
         if max_variable_length is None:
@@ -368,21 +370,11 @@ class CountTable(Table[CountBatch]):
                 "max_variable_length is smaller than"
                 " the longest sequence in dataframe"
             )
-        # Needed for experiment-specific parameters if train/val/test splitting
         self.min_variable_length = min_variable_length
         self.max_variable_length = max_variable_length
-
-        # Get dataframe data
-        self.padding_value = alphabet.get_index["*" if zero_pad else " "]
-        self.target = torch.tensor(dataframe.values, dtype=__precision__)
-        self.seqs = torch.nn.utils.rnn.pad_sequence(
-            [alphabet.translate(seq) for seq in dataframe.index],
-            batch_first=True,
-            padding_value=self.padding_value,
-        )
         self.seqs = F.pad(
             self.seqs,
-            (0, self.max_variable_length - self.seqs.shape[1]),
+            (0, self.max_variable_length - self.input_shape),
             value=self.padding_value,
         ).contiguous()
 
