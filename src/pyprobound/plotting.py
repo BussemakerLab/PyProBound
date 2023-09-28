@@ -261,7 +261,9 @@ def posbias(conv1d: Conv0d | Conv1d, save: str | None = None) -> None:
     for i_out, out in enumerate(
         conv1d.get_log_posbias().detach().cpu().unbind(1)
     ):
-        out = torch.exp(out[conv1d.min_input_length :])
+        if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
+            out = out[conv1d.min_input_length :]
+        out = torch.exp(out)
         rows = int(10 * (out.shape[0] / sum(out.shape)))
         rows = min(8, max(2, rows))
         columns = 10 - rows
@@ -300,7 +302,9 @@ def posbias(conv1d: Conv0d | Conv1d, save: str | None = None) -> None:
         )
         positions = axs[0].get_xticks()
         step = int(positions[-1] - positions[-2])
-        if step > 0:
+        if step > 0 and (
+            isinstance(conv1d, Conv0d) or conv1d.length_specific_bias
+        ):
             positions = range(
                 0, conv1d.max_input_length - conv1d.min_input_length + 1, step
             )

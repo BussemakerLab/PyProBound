@@ -47,6 +47,7 @@ class Conv1d(Layer):
         max_input_length: int,
         train_posbias: bool = False,
         bias_bin: int = 1,
+        length_specific_bias: bool = True,
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
@@ -66,6 +67,8 @@ class Conv1d(Layer):
             bias_bin: Applies the constraint
                 :math:`\omega(x_{i\times\text{bias_bin}}) = \cdots
                 = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
+            length_specific_bias: Whether to train a separate bias parameter
+                for each input length.
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
@@ -87,14 +90,18 @@ class Conv1d(Layer):
             raise ValueError("min_input_length must be at least kernel_size")
 
         # Store instance attributes
-        self._bias_bin = bias_bin
         self.one_hot = one_hot
         self.unfold = unfold
         self.normalize = normalize
+        self._bias_bin = bias_bin
+        self._length_specific_bias = length_specific_bias
 
         # Create posbias parameter
         n_windows = self._num_windows(self.input_shape)
-        n_lengths = self.max_input_length - self.min_input_length + 1
+        if self.length_specific_bias:
+            n_lengths = self.max_input_length - self.min_input_length + 1
+        else:
+            n_lengths = 1
         self.train_posbias = train_posbias
         self.log_posbias = torch.nn.Parameter(
             torch.zeros(
@@ -111,6 +118,7 @@ class Conv1d(Layer):
         prev: Table[Any] | Layer,
         train_posbias: bool = False,
         bias_bin: int = 1,
+        length_specific_bias: bool = True,
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
@@ -127,6 +135,8 @@ class Conv1d(Layer):
             bias_bin: Applies the constraint
                 :math:`\omega(x_{i\times\text{bias_bin}}) = \cdots
                 = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
+            length_specific_bias: Whether to train a separate bias parameter
+                for each input length.
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
@@ -147,6 +157,7 @@ class Conv1d(Layer):
             max_input_length=max_input_length,
             train_posbias=train_posbias,
             bias_bin=bias_bin,
+            length_specific_bias=length_specific_bias,
             one_hot=one_hot,
             unfold=unfold,
             normalize=normalize,
@@ -160,6 +171,11 @@ class Conv1d(Layer):
         = \cdots = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
         """
         return self._bias_bin
+
+    @property
+    def length_specific_bias(self) -> bool:
+        """Whether to train a separate bias parameter for each input length."""
+        return self._length_specific_bias
 
     def _num_windows(self, input_length: int) -> int:
         """The number of sliding windows modeled by biases."""
@@ -180,6 +196,7 @@ class Conv1d(Layer):
             min_input_length=self.min_input_length,
             max_input_length=self.max_input_length,
             bias_bin=self.bias_bin,
+            length_specific_bias=self.length_specific_bias,
         )
         if self.log_posbias.shape != alt_conv1d.log_posbias.shape:
             raise RuntimeError(
@@ -315,12 +332,13 @@ class Conv1d(Layer):
         log_posbias: Tensor = self.log_posbias
         if self.normalize:
             log_posbias = log_posbias - log_posbias.mean(dim=-1, keepdim=True)
-        log_posbias = F.pad(
-            log_posbias.repeat_interleave(self.bias_bin, -1)[
-                ..., : self.out_len(self.input_shape)
-            ],
-            (0, 0, 0, 0, self.min_input_length, 0),
-        )
+        log_posbias = log_posbias.repeat_interleave(self.bias_bin, -1)[
+            ..., : self.out_len(self.input_shape)
+        ]
+        if self.length_specific_bias:
+            log_posbias = F.pad(
+                log_posbias, (0, 0, 0, 0, self.min_input_length, 0)
+            )
         return log_posbias
 
     def score_onehot(
@@ -531,7 +549,9 @@ class Conv1d(Layer):
         # Get posbias
         posbias = None
         if self.log_posbias.requires_grad or torch.any(self.log_posbias != 0):
-            posbias = self.get_log_posbias()[self.lengths(seqs)]
+            posbias = self.get_log_posbias()
+            if self.length_specific_bias:
+                posbias = posbias[self.lengths(seqs)]
 
         # Score
         if self.one_hot or seqs.ndim == 3 or requires_embedding:
