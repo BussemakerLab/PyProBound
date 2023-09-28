@@ -335,9 +335,9 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
             else:
                 if colors is None:
                     axs.errorbar(
-                        pred,
-                        obs,
-                        yerr=err,
+                        pred.numpy(),
+                        obs.numpy(),
+                        yerr=err.numpy(),
                         label=scatter_label,
                         alpha=0.5,
                         fmt="o",
