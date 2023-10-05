@@ -2,12 +2,12 @@
 
 Members are explicitly re-exported in pyprobound.layers.
 """
-from typing import Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing_extensions import Any, Self, override
+from typing_extensions import Self, override
 
 from .. import __precision__
 from ..base import BindingOptim, Call, Step

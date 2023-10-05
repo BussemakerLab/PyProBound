@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Iterable, Iterator
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import torch
 import torch.nn.functional as F
@@ -384,7 +384,7 @@ class UnboundRound(Round):
 
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
-        return cast(Tensor, -F.softplus(self.log_aggregate(seqs)))
+        return -F.softplus(self.log_aggregate(seqs))
 
 
 class RhoGammaRound(Round):
@@ -502,7 +502,7 @@ class RhoGammaRound(Round):
         log_agg = self.log_aggregate(seqs)
         return torch.exp(self.log_rho) * log_agg - torch.exp(
             self.log_gamma
-        ) * cast(Tensor, F.softplus(log_agg))
+        ) * F.softplus(log_agg)
 
 
 class ExponentialRound(Round):

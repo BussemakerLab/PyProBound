@@ -4,7 +4,7 @@ Members are explicitly re-exported in pyprobound.layers.
 """
 from __future__ import annotations
 
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 
 import torch.nn.functional as F
 from torch import Tensor
@@ -149,11 +149,8 @@ class MaxPool1d(Layer):
             :math:`\text{ceil_mode ? ceil : floor}
             (\text{length} / \text{kernel_size}))`.
         """
-        return cast(
-            Tensor,
-            F.max_pool1d(
-                seqs,
-                self.layer_spec.kernel_size,
-                ceil_mode=self.layer_spec.ceil_mode,
-            ),
+        return F.max_pool1d(
+            seqs,
+            self.layer_spec.kernel_size,
+            ceil_mode=self.layer_spec.ceil_mode,
         )

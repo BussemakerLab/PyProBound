@@ -64,6 +64,8 @@ max-line-length = 79
 
 [tool.pylint."messages control"]
 disable = [
+    "cyclic-import",
+    "duplicate-code",
     "import-error",
     "too-many-arguments",
     "too-many-branches",

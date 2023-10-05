@@ -213,7 +213,7 @@ class Component(torch.nn.Module, abc.ABC):
             if hasattr(module, "update_params") and callable(
                 module.update_params
             ):
-                module.update_params()  # type: ignore[unreachable]
+                module.update_params()
 
         # Reshape remaining tensors
         for key in list(checkpoint_state_dict.keys()):

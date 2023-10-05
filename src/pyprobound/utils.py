@@ -73,15 +73,13 @@ def log1mexp(tensor: Tensor, /, eps: float = 1e-8) -> Tensor:
     )
 
 
-def logsigmoid(tensor: Tensor, /, threshold: float = 20) -> Tensor:
+def logsigmoid(tensor: Tensor, /, threshold: int = 20) -> Tensor:
     r"""Computes the element-wise logsigmoid using softplus for stability.
 
     .. math::
         \log \frac{1}{1 + e^{-x}}
     """
-    return cast(
-        Tensor, -torch.nn.functional.softplus(-tensor, threshold=threshold)
-    )
+    return -torch.nn.functional.softplus(-tensor, threshold=threshold)
 
 
 def betaln(z_1: Tensor, z_2: Tensor) -> Tensor:

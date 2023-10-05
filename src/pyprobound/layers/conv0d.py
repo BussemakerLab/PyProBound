@@ -8,12 +8,12 @@ change the output is the length of the sequence, not its identity. It sets a
 background enrichment level from which a sequence-specific enrichment is
 optimized. If it is included in an aggregate, it should be listed first.
 """
-from typing import Literal, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing_extensions import Any, Self, override
+from typing_extensions import Self, override
 
 from .. import __precision__
 from ..alphabets import Alphabet
