@@ -1,4 +1,4 @@
-"""Re-implementation of ProBound in PyTorch."""
+"""Python implementation of ProBound."""
 # pylint: disable=undefined-variable
 
 import torch

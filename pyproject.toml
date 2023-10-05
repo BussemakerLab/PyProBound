@@ -8,7 +8,7 @@ authors = [
     { name = "Lucas A. N. Melo", email = "lucas.melo@columbia.edu" },
     { name = "Harmen J. Bussemaker", email = "hjb2004@columbia.edu" },
 ]
-description = "Re-implementation of ProBound using PyTorch"
+description = "Python implementation of ProBound"
 requires-python = ">=3.10"
 dynamic = ["version"]
 classifiers = [

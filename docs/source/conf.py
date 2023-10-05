@@ -5,8 +5,6 @@ import time
 
 import torch
 
-import pyprobound
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.pardir, "src")))
 
 # -- Project information -----------------------------------------------------
@@ -17,8 +15,6 @@ author = "Lucas A.N. Melo and Harmen J. Bussemaker"
 year = time.gmtime().tm_year
 copyright_year = f"2023-{year}" if year > 2023 else "2023"
 project_copyright = f"{copyright_year}, {author}"
-release = pyprobound.__version__
-version = release
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
