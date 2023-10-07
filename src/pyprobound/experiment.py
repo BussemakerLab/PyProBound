@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+import graphlib
 from collections.abc import Iterable, Iterator
 
 import torch
@@ -49,15 +50,16 @@ class Experiment(Transform):
         if len(self.observed_rounds) != len(set(self.observed_rounds)):
             raise ValueError("Cannot repeat the same round twice")
 
-        # Get all rounds (including unobserved), using dict to preserve order
-        round_ancestry = {rnd: None for rnd in self.observed_rounds}
+        # Get all rounds (including unobserved)
+        sorter: graphlib.TopologicalSorter[
+            BaseRound
+        ] = graphlib.TopologicalSorter()
         for rnd in self.observed_rounds:
-            cur_rnd = rnd
-            while cur_rnd.reference_round is not None:
-                round_ancestry[cur_rnd] = None
-                cur_rnd = cur_rnd.reference_round
+            while rnd.reference_round is not None:
+                sorter.add(rnd, rnd.reference_round)
+                rnd = rnd.reference_round
         self.rounds: TModuleList[BaseRound] = TModuleList(
-            round_ancestry.keys()
+            sorter.static_order()
         )
 
         # Check depth training

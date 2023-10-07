@@ -10,7 +10,7 @@ import sys
 import tempfile
 import timeit
 import warnings
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Iterable, MutableMapping, Sequence
 from typing import Any, Generic, TypeVar, cast
 
 import torch
@@ -18,7 +18,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Sampler
 
 from .aggregate import Contribution
-from .base import Call, Step
+from .base import Call, Spec, Step
 from .layers import Conv1d
 from .loss import Loss, LossModule
 from .mode import Mode
@@ -219,11 +219,36 @@ class Optimizer(Generic[T]):
 
         return self.model.get_setup_string() + "\n" + "\n".join(out)
 
-    def get_train_sequential(self) -> str:
-        """A description of the sequential optimization steps to be taken."""
+    def get_train_sequential(
+        self, order: Iterable[Iterable[tuple[Spec, ...]]] | None = None
+    ) -> str:
+        """A description of the sequential optimization steps to be taken.
+
+        Args:
+            order: An iterable encoding the training order, where each element
+                is an iterable of binding keys to be trained simultaneously.
+        """
         out: list[str] = []
-        for bmd_key, binding_optim in self.model.optim_procedure().items():
-            key_str = f"### Binding: {'-'.join(i.name for i in bmd_key)}"
+        optim_procedure = self.model.optim_procedure()
+        if order is None:
+            order = optim_procedure.keys()
+        for keys in order:
+            if isinstance(keys[0], Spec):
+                binding_optim = optim_procedure[keys]
+                key_str = f"### Binding: {'-'.join(str(i) for i in keys)}"
+            else:
+                # Merge optimization of all modes
+                binding_optims = [optim_procedure[key] for key in keys]
+                binding_optim = binding_optims[0]
+                for alt_optim in binding_optims[1:]:
+                    for ancestry in alt_optim.ancestry:
+                        binding_optim.ancestry.add(ancestry)
+                    binding_optim.steps.extend(alt_optim.steps)
+                binding_optim.merge_binding_optim()
+                key_str = "### Binding: " + " and ".join(
+                    "-".join(str(i) for i in key) for key in keys
+                )
+
             if len(out) == 0:
                 out.append(key_str)
             else:
@@ -267,10 +292,10 @@ class Optimizer(Generic[T]):
         """
         self.model.save(
             checkpoint,
-            flank_lengths=[
+            flank_lengths=tuple(
                 (ct.left_flank_length, ct.right_flank_length)
                 for ct in self.train_tables
-            ],
+            ),
         )
 
     def reload(
@@ -637,12 +662,18 @@ class Optimizer(Generic[T]):
 
         self.check_length_consistency()
 
-    def train_sequential(self, maintain_loss: bool = True) -> Tensor:
+    def train_sequential(
+        self,
+        maintain_loss: bool = True,
+        order: Iterable[Iterable[tuple[Spec, ...]]] | None = None,
+    ) -> Tensor:
         """Train parameters according to the sequential optimization procedure.
 
         Args:
             maintain_loss: Whether to keep the `best_loss` from one step to the
                 next when determining if the loss has improved.
+            order: An iterable encoding the training order, where each element
+                is an iterable of binding keys to be trained simultaneously.
 
         Returns:
             The best loss calculated during the optimization procedure.
@@ -650,16 +681,33 @@ class Optimizer(Generic[T]):
 
         self.print(self.get_setup_string())
         self.save(self.checkpoint)
-        for mode_idx, (mode, mode_optim) in enumerate(
-            self.model.optim_procedure().items()
-        ):
-            self.print(f"\n### Training Mode {mode_idx}: {mode}")
-            for ancestors in mode_optim.ancestry:
+        optim_procedure = self.model.optim_procedure()
+        if order is None:
+            order = optim_procedure.keys()
+        for binding_idx, keys in enumerate(order):
+            if isinstance(keys[0], Spec):
+                binding_optim = optim_procedure[keys]
+                key_str = "-".join(str(i) for i in keys)
+            else:
+                # Merge optimization of all modes
+                binding_optims = [optim_procedure[key] for key in keys]
+                binding_optim = binding_optims[0]
+                for alt_optim in binding_optims[1:]:
+                    for ancestry in alt_optim.ancestry:
+                        binding_optim.ancestry.add(ancestry)
+                    binding_optim.steps.extend(alt_optim.steps)
+                binding_optim.merge_binding_optim()
+                key_str = " and ".join(
+                    "-".join(str(i) for i in key) for key in keys
+                )
+
+            self.print(f"\n### Training Mode {binding_idx}: {key_str}")
+            for ancestors in binding_optim.ancestry:
                 self.print(f"\t{' → '.join(str(i) for i in ancestors)}")
 
             best_loss = POSINF
             self.save(self.checkpoint)
-            for step_idx, step in enumerate(mode_optim.steps):
+            for step_idx, step in enumerate(binding_optim.steps):
                 self.print(f"\t{step_idx}.", end="")
 
                 # Check if greedy search

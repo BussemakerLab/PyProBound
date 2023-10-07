@@ -73,12 +73,14 @@ class BindingOptim(NamedTuple):
         for step_idx, step in enumerate(self.steps):
             dropped_call_indices: set[int] = set()
             for call_idx, call in enumerate(step.calls):
-                if call.fun == "unfreeze":
+                if call.fun in ("unfreeze", "activity_heuristic", "freeze"):
                     key = (
                         type(call.cmpt).__name__,
                         call.fun,
                         frozenset(call.kwargs.items()),
                     )
+                    if call.fun == "activity_heuristic":
+                        key = ("", call.fun, frozenset())
                     if key not in call_to_step:
                         call_to_step[key] = step_idx
                     else:
@@ -156,7 +158,7 @@ class Component(torch.nn.Module, abc.ABC):
     def save(
         self,
         checkpoint: torch.serialization.FILE_LIKE,
-        flank_lengths: list[tuple[int, int]],
+        flank_lengths: tuple[tuple[int, int], ...] = tuple(),
     ) -> None:
         """Saves the model to a file with "state_dict" and "metadata" fields.
 
