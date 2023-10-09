@@ -231,23 +231,19 @@ class Optimizer(Generic[T]):
         out: list[str] = []
         optim_procedure = self.model.optim_procedure()
         if order is None:
-            order = optim_procedure.keys()
+            order = [[i] for i in optim_procedure.keys()]
         for keys in order:
-            if isinstance(keys[0], Spec):
-                binding_optim = optim_procedure[keys]
-                key_str = f"### Binding: {'-'.join(str(i) for i in keys)}"
-            else:
-                # Merge optimization of all modes
-                binding_optims = [optim_procedure[key] for key in keys]
-                binding_optim = binding_optims[0]
-                for alt_optim in binding_optims[1:]:
-                    for ancestry in alt_optim.ancestry:
-                        binding_optim.ancestry.add(ancestry)
-                    binding_optim.steps.extend(alt_optim.steps)
-                binding_optim.merge_binding_optim()
-                key_str = "### Binding: " + " and ".join(
-                    "-".join(str(i) for i in key) for key in keys
-                )
+            # Merge optimization of all modes
+            binding_optims = [optim_procedure[key] for key in keys]
+            binding_optim = binding_optims[0]
+            for alt_optim in binding_optims[1:]:
+                for ancestry in alt_optim.ancestry:
+                    binding_optim.ancestry.add(ancestry)
+                binding_optim.steps.extend(alt_optim.steps)
+            binding_optim.merge_binding_optim()
+            key_str = "### Binding: " + " and ".join(
+                "-".join(str(i) for i in key) for key in keys
+            )
 
             if len(out) == 0:
                 out.append(key_str)
@@ -683,23 +679,19 @@ class Optimizer(Generic[T]):
         self.save(self.checkpoint)
         optim_procedure = self.model.optim_procedure()
         if order is None:
-            order = optim_procedure.keys()
+            order = [[i] for i in optim_procedure.keys()]
         for binding_idx, keys in enumerate(order):
-            if isinstance(keys[0], Spec):
-                binding_optim = optim_procedure[keys]
-                key_str = "-".join(str(i) for i in keys)
-            else:
-                # Merge optimization of all modes
-                binding_optims = [optim_procedure[key] for key in keys]
-                binding_optim = binding_optims[0]
-                for alt_optim in binding_optims[1:]:
-                    for ancestry in alt_optim.ancestry:
-                        binding_optim.ancestry.add(ancestry)
-                    binding_optim.steps.extend(alt_optim.steps)
-                binding_optim.merge_binding_optim()
-                key_str = " and ".join(
-                    "-".join(str(i) for i in key) for key in keys
-                )
+            # Merge optimization of all modes
+            binding_optims = [optim_procedure[key] for key in keys]
+            binding_optim = binding_optims[0]
+            for alt_optim in binding_optims[1:]:
+                for ancestry in alt_optim.ancestry:
+                    binding_optim.ancestry.add(ancestry)
+                binding_optim.steps.extend(alt_optim.steps)
+            binding_optim.merge_binding_optim()
+            key_str = " and ".join(
+                "-".join(str(i) for i in key) for key in keys
+            )
 
             self.print(f"\n### Training Mode {binding_idx}: {key_str}")
             for ancestors in binding_optim.ancestry:

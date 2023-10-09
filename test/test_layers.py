@@ -18,13 +18,10 @@ class BaseTestCases:
         def test_out_len_shape(self) -> None:
             num_seqs = len(self.count_table)
             num_pos = self.count_table.input_shape
+            out_shape = self.layer(self.count_table.seqs).shape
             self.assertEqual(
-                self.layer(self.count_table.seqs).shape,
-                (
-                    num_seqs,
-                    self.layer.out_channels,
-                    self.layer.out_len(num_pos, mode="shape"),
-                ),
+                (out_shape[0], out_shape[-1]),
+                (num_seqs, self.layer.out_len(num_pos, mode="shape")),
                 "incorrect out shape",
             )
 
@@ -46,13 +43,16 @@ class BaseTestCases:
             min_len = torch.tensor(float("nan"))
             max_len = torch.tensor(float("nan"))
             for i in range(pad_len + 1):
+                if i > 0 and isinstance(self.layer, pyprobound.layers.Roll):
+                    # assumes right-padded input only
+                    continue
                 padding_idx: float = self.count_table.alphabet.neginf_pad
                 if self.count_table.seqs.ndim == 3:
                     padding_idx = float("-inf")
                 seqs = F.pad(
                     self.count_table.seqs, (i, pad_len), value=padding_idx
                 )
-                output = self.layer(seqs).isfinite().sum(-1)
+                output = self.layer.lengths(self.layer(seqs))
                 if min_len.ndim == 0:
                     min_len = output
                     max_len = output
@@ -61,17 +61,11 @@ class BaseTestCases:
                     max_len = torch.maximum(max_len, output)
 
             self.assertTrue(
-                torch.equal(
-                    min_len,
-                    out_len_min.unsqueeze(-1).expand(-1, min_len.shape[-1]),
-                ),
+                torch.equal(min_len, out_len_min),
                 "incorrect out_len in mode='min'",
             )
             self.assertTrue(
-                torch.equal(
-                    max_len,
-                    out_len_max.unsqueeze(-1).expand(-1, max_len.shape[-1]),
-                ),
+                torch.equal(max_len, out_len_max),
                 "incorrect out_len in mode='max'",
             )
 

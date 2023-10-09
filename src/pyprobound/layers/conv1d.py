@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.layers.
 """
+from collections.abc import Sequence
 from typing import Any, Literal, TypeVar, cast
 
 import torch
@@ -46,8 +47,10 @@ class Conv1d(Layer):
         min_input_length: int,
         max_input_length: int,
         train_posbias: bool = False,
+        bias_mode: Literal["channel", "same", "reverse"] = "channel",
         bias_bin: int = 1,
         length_specific_bias: bool = True,
+        out_channel_indexing: Sequence[int] | None = None,
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
@@ -64,11 +67,16 @@ class Conv1d(Layer):
                 sequence.
             train_posbias: Whether to train a bias :math:`\omega(x)` for each
                 output position and channel.
+            bias_mode: Whether to train a separate bias for each output
+                channel, use the same bias across all output channels, or (if
+                `score_reverse`) flip it for the reverse output channels.
             bias_bin: Applies the constraint
                 :math:`\omega(x_{i\times\text{bias_bin}}) = \cdots
                 = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
             length_specific_bias: Whether to train a separate bias parameter
                 for each input length.
+            out_channel_indexing: Output channel indexing, equivalent to
+                `Conv1d(seqs)[:,out_channel_indexing]`.
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
@@ -88,13 +96,19 @@ class Conv1d(Layer):
             raise ValueError("min_input_length must be nonnegative")
         if min_input_length < self.layer_spec.kernel_size:
             raise ValueError("min_input_length must be at least kernel_size")
+        if bias_mode == "reverse" and not self.layer_spec.score_reverse:
+            raise ValueError(
+                "Cannot use bias_mode reverse if not score_reverse"
+            )
 
         # Store instance attributes
         self.one_hot = one_hot
         self.unfold = unfold
         self.normalize = normalize
+        self._bias_mode = bias_mode
         self._bias_bin = bias_bin
         self._length_specific_bias = length_specific_bias
+        self._out_channel_indexing = out_channel_indexing
 
         # Create posbias parameter
         n_windows = self._num_windows(self.input_shape)
@@ -102,11 +116,16 @@ class Conv1d(Layer):
             n_lengths = self.max_input_length - self.min_input_length + 1
         else:
             n_lengths = 1
+        if self.bias_mode == "channel":
+            bias_channels = self.layer_spec.out_channels
+        elif self.bias_mode == "same":
+            bias_channels = 1
+        elif self.bias_mode == "reverse":
+            bias_channels = self.layer_spec.out_channels // 2
         self.train_posbias = train_posbias
         self.log_posbias = torch.nn.Parameter(
             torch.zeros(
-                size=(n_lengths, self.out_channels, n_windows),
-                dtype=__precision__,
+                size=(n_lengths, bias_channels, n_windows), dtype=__precision__
             ),
             requires_grad=train_posbias,
         )
@@ -117,8 +136,10 @@ class Conv1d(Layer):
         psam: PSAM,
         prev: Table[Any] | Layer,
         train_posbias: bool = False,
+        bias_mode: Literal["channel", "same", "reverse"] = "channel",
         bias_bin: int = 1,
         length_specific_bias: bool = True,
+        out_channel_indexing: Sequence[int] | None = None,
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
@@ -132,11 +153,16 @@ class Conv1d(Layer):
                 an input; otherwise, the layer that precedes it.
             train_posbias: Whether to train a bias :math:`\omega(x)` for each
                 output position and channel.
+            bias_mode: Whether to train a separate bias for each output
+                channel, use the same bias across all output channels, or (if
+                `score_reverse`) flip it for the reverse output channels.
             bias_bin: Applies the constraint
                 :math:`\omega(x_{i\times\text{bias_bin}}) = \cdots
                 = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
             length_specific_bias: Whether to train a separate bias parameter
                 for each input length.
+            out_channel_indexing: Output channel indexing, equivalent to
+                `Conv1d(seqs)[:,out_channel_indexing]`.
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
@@ -156,13 +182,22 @@ class Conv1d(Layer):
             min_input_length=min_input_length,
             max_input_length=max_input_length,
             train_posbias=train_posbias,
+            bias_mode=bias_mode,
             bias_bin=bias_bin,
             length_specific_bias=length_specific_bias,
+            out_channel_indexing=out_channel_indexing,
             one_hot=one_hot,
             unfold=unfold,
             normalize=normalize,
             name=name,
         )
+
+    @property
+    def bias_mode(self) -> Literal["channel", "same", "reverse"]:
+        """Whether to train a separate bias for each output
+        channel, use the same bias across all output channels, or (if
+        `score_reverse`) flip it for the reverse output channels."""
+        return self._bias_mode
 
     @property
     def bias_bin(self) -> int:
@@ -176,6 +211,19 @@ class Conv1d(Layer):
     def length_specific_bias(self) -> bool:
         """Whether to train a separate bias parameter for each input length."""
         return self._length_specific_bias
+
+    @property
+    def out_channel_indexing(self) -> Sequence[int] | None:
+        """Output channel indexing, equivalent to
+        `Conv1d(seqs)[:,out_channel_indexing]`."""
+        return self._out_channel_indexing
+
+    @override
+    @property
+    def out_channels(self) -> int:
+        if self.out_channel_indexing is not None:
+            return len(self.out_channel_indexing)
+        return super().out_channels
 
     def _num_windows(self, input_length: int) -> int:
         """The number of sliding windows modeled by biases."""
@@ -195,8 +243,10 @@ class Conv1d(Layer):
             input_shape=self.input_shape,
             min_input_length=self.min_input_length,
             max_input_length=self.max_input_length,
+            bias_mode=self.bias_mode,
             bias_bin=self.bias_bin,
             length_specific_bias=self.length_specific_bias,
+            out_channel_indexing=self.out_channel_indexing,
         )
         if self.log_posbias.shape != alt_conv1d.log_posbias.shape:
             raise RuntimeError(
@@ -335,6 +385,8 @@ class Conv1d(Layer):
         log_posbias = log_posbias.repeat_interleave(self.bias_bin, -1)[
             ..., : self.out_len(self.input_shape)
         ]
+        if self.bias_mode == "reverse":
+            log_posbias = torch.cat((log_posbias, log_posbias.flip(-1)), dim=1)
         if self.length_specific_bias:
             log_posbias = F.pad(
                 log_posbias, (0, 0, 0, 0, self.min_input_length, 0)
@@ -555,5 +607,13 @@ class Conv1d(Layer):
 
         # Score
         if self.one_hot or seqs.ndim == 3 or requires_embedding:
+            if self.out_channel_indexing is not None:
+                return self.score_onehot(seqs, posbias)[
+                    :, self.out_channel_indexing
+                ]
             return self.score_onehot(seqs, posbias)
+        if self.out_channel_indexing is not None:
+            return self.score_dense(seqs, posbias)[
+                :, self.out_channel_indexing
+            ]
         return self.score_dense(seqs, posbias)
