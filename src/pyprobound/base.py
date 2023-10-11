@@ -368,11 +368,6 @@ class Transform(Component):
         ancestry: tuple[Component, ...] | None = None,
         current_order: dict[tuple[Spec, ...], BindingOptim] | None = None,
     ) -> dict[tuple[Spec, ...], BindingOptim]:
-        # Transforms are applied on sequences from the same experiment
-        #    and binding keys cannot re-occur in an experiment
-        bindings = {m for m in self.modules() if isinstance(m, Binding)}
-        if len(bindings) != len({m.key() for m in bindings}):
-            raise ValueError(f"Non-unique Binding component found in {self}")
         return super().optim_procedure(ancestry, current_order)
 
     @override
