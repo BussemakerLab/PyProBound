@@ -272,6 +272,7 @@ class Round(BaseRound):
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
+        activity_heuristic: float = 0.05,
         name: str = "",
     ) -> Self:
         r"""Creates a new instance from binding components and reference round.
@@ -286,6 +287,8 @@ class Round(BaseRound):
                 the free protein concentration.
             library_concentration: Library concentration, used for estimating
                 the free protein concentration.
+            activity_heuristic: The fraction of the total aggregate that the
+                contribution will be set to when it is first optimized.
             name: A string used to describe the round.
         """
         return cls(
@@ -293,6 +296,7 @@ class Round(BaseRound):
                 binding,
                 train_concentration=train_concentration,
                 target_concentration=target_concentration,
+                activity_heuristic=activity_heuristic,
             ),
             reference_round=reference_round,
             train_depth=train_depth,
@@ -454,6 +458,7 @@ class RhoGammaRound(Round):
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
+        activity_heuristic: float = 0.05,
         name: str = "",
         log_rho: float = 1,
         log_gamma: float = -1,
@@ -470,6 +475,8 @@ class RhoGammaRound(Round):
                 the free protein concentration.
             library_concentration: Library concentration, used for estimating
                 the free protein concentration.
+            activity_heuristic: The fraction of the total aggregate that the
+                contribution will be set to when it is first optimized.
             name: A string used to describe the round.
             log_rho: The initial value of `log_rho`.
             log_gamma: The initial value of `log_gamma`.
@@ -479,6 +486,7 @@ class RhoGammaRound(Round):
                 binding,
                 train_concentration=train_concentration,
                 target_concentration=target_concentration,
+                activity_heuristic=activity_heuristic,
             ),
             reference_round=reference_round,
             train_depth=train_depth,
@@ -605,6 +613,7 @@ class ExponentialRound(Round):
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
+        activity_heuristic: float = 0.05,
         name: str = "",
         delta: float = -15,
         train_delta: bool = True,
@@ -621,6 +630,8 @@ class ExponentialRound(Round):
                 the free protein concentration.
             library_concentration: Library concentration, used for estimating
                 the free protein concentration.
+            activity_heuristic: The fraction of the total aggregate that the
+                contribution will be set to when it is first optimized.
             name: A string used to describe the round.
             delta: Initial value of :math:`\delta`.
             train_delta: Whether to train the `delta` parameter.
@@ -630,6 +641,7 @@ class ExponentialRound(Round):
                 binding,
                 train_concentration=train_concentration,
                 target_concentration=target_concentration,
+                activity_heuristic=activity_heuristic,
             ),
             reference_round=reference_round,
             train_depth=train_depth,

@@ -472,7 +472,11 @@ class PSAM(LayerSpec):
                         removed_keys.discard(key)
                     else:
                         param = torch.nn.Parameter(
-                            torch.tensor(0.0, device=self.symmetry.device),
+                            torch.tensor(
+                                0.0,
+                                device=self.symmetry.device,
+                                dtype=__precision__,
+                            ),
                             requires_grad=(
                                 (pairwise_grad or dist == 0)
                                 and key not in self.frozen_parameters
@@ -509,6 +513,8 @@ class PSAM(LayerSpec):
         Returns:
             A tuple of the added and removed parameters, respectively.
         """
+        if left_shift == right_shift == 0:
+            return tuple(), tuple()
         if left_shift + right_shift <= -(
             self.kernel_size - self.pairwise_distance
         ):
@@ -523,30 +529,35 @@ class PSAM(LayerSpec):
                 f"in a size of {self.kernel_size + left_shift + right_shift}"
                 f" but max_kernel_size is {self.max_kernel_size}"
             )
-        if (
-            check_threshold
-            and left_shift > 0
-            and min(self.get_information(0), self.get_information(1))
-            < self.information_threshold
-        ):
-            raise ValueError(
-                "Cannot shift footprint left since information content is "
-                f" {min(self.get_information(0), self.get_information(1))}"
-                f"; {self.information_threshold} needed for footprint shift"
-            )
-        if (
-            check_threshold
-            and right_shift > 0
-            and min(self.get_information(-2), self.get_information(-1))
-            < self.information_threshold
-        ):
-            raise ValueError(
-                "Cannot shift footprint right since information content is "
-                f" {min(self.get_information(-2), self.get_information(-1))}"
-                f"; {self.information_threshold} needed for footprint shift"
-            )
-        if left_shift == right_shift == 0:
-            return tuple(), tuple()
+
+        # Check information content if check_threshold
+        info_left = [self.get_information(0)]
+        info_right = [self.get_information(-1)]
+        if self.kernel_size > 1:
+            info_left.append(self.get_information(1))
+            info_right.append(self.get_information(-2))
+        if check_threshold:
+            if left_shift > 0 and min(info_left) < self.information_threshold:
+                left_shift = 0
+            if left_shift < 0 and max(info_left) > self.information_threshold:
+                left_shift = 0
+            if (
+                right_shift > 0
+                and min(info_right) < self.information_threshold
+            ):
+                right_shift = 0
+            if (
+                right_shift < 0
+                and max(info_right) > self.information_threshold
+            ):
+                right_shift = 0
+            if left_shift == 0 and right_shift == 0:
+                raise ValueError(
+                    f"Cannot shift footprint ({left_shift, right_shift})"
+                    f" since information content is {info_left} on the left"
+                    f" and {info_right} on the right"
+                    f"; {self.information_threshold} needed for shift"
+                )
 
         # Update biases
         for conv1d in self._layers:

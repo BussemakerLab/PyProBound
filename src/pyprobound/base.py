@@ -177,19 +177,12 @@ class Component(torch.nn.Module, abc.ABC):
             {"state_dict": state_dict, "metadata": metadata}, checkpoint
         )
 
-    def reload(
-        self, checkpoint: torch.serialization.FILE_LIKE
-    ) -> dict[str, Any]:
-        """Loads the model from a checkpoint file.
+    def reload_from_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """Loads the model from a state dict.
 
         Args:
-            checkpoint: The file where the model state_dict was written to.
-
-        Returns:
-            The metadata field of the checkpoint file.
+            state_dict: The state dict, usually returned by self.state_dict().
         """
-        checkpoint_state = torch.load(checkpoint)
-        checkpoint_state_dict = checkpoint_state["state_dict"]
 
         def get_attr(obj: Any, names: list[str]) -> Any:
             if len(names) == 1:
@@ -203,10 +196,10 @@ class Component(torch.nn.Module, abc.ABC):
                 set_attr(getattr(obj, names[0]), names[1:], val)
 
         # Update symmetry buffers
-        for key in list(checkpoint_state_dict.keys()):
+        for key in list(state_dict.keys()):
             if "symmetry" not in key:
                 continue
-            checkpoint_param = checkpoint_state_dict[key]
+            checkpoint_param = state_dict[key]
             submod_names = key.split(".")
             set_attr(self, submod_names, checkpoint_param)
 
@@ -218,8 +211,8 @@ class Component(torch.nn.Module, abc.ABC):
                 module.update_params()
 
         # Reshape remaining tensors
-        for key in list(checkpoint_state_dict.keys()):
-            checkpoint_param = checkpoint_state_dict[key]
+        for key in list(state_dict.keys()):
+            checkpoint_param = state_dict[key]
             submod_names = key.split(".")
             try:
                 self_attr = get_attr(self, submod_names)
@@ -232,7 +225,22 @@ class Component(torch.nn.Module, abc.ABC):
                     )
                 set_attr(self, submod_names, checkpoint_param)
 
-        self.load_state_dict(checkpoint_state_dict, strict=False)
+        self.load_state_dict(state_dict, strict=False)
+
+    def reload(
+        self, checkpoint: torch.serialization.FILE_LIKE
+    ) -> dict[str, Any]:
+        """Loads the model from a checkpoint file.
+
+        Args:
+            checkpoint: The file where the model state_dict was written to.
+
+        Returns:
+            The metadata field of the checkpoint file.
+        """
+        checkpoint_state: dict[str, Any] = torch.load(checkpoint)
+        checkpoint_state_dict: dict[str, Any] = checkpoint_state["state_dict"]
+        self.reload_from_state_dict(checkpoint_state_dict)
         return cast(dict[str, Any], checkpoint_state["metadata"])
 
     @abc.abstractmethod

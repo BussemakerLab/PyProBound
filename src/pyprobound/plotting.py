@@ -27,7 +27,8 @@ from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
 from .utils import avg_pool1d
 
-matplotlib.rcParams["font.sans-serif"] = "Arial"
+if "Arial" in matplotlib.font_manager.findfont("Arial"):
+    matplotlib.rcParams["font.sans-serif"] = "Arial"
 gnbu = plt.get_cmap("YlGnBu")(range(256))[64:]
 gnbu_mod = matplotlib.colors.LinearSegmentedColormap.from_list(
     "gnbu_mod", gnbu
@@ -116,7 +117,10 @@ def logo(
     matrices = [
         cast(
             NDArray[Any],
-            torch.movedim(psam.get_filter(i).detach(), -1, 1)[0].cpu().numpy(),
+            torch.movedim(psam.get_filter(i).detach(), -1, 1)[0]
+            .float()
+            .cpu()
+            .numpy(),
         )
         for i in range(psam.pairwise_distance + 1)
     ]
@@ -259,7 +263,7 @@ def posbias(conv1d: Conv0d | Conv1d, save: str | None = None) -> None:
         save: The basename to write the plot to, if provided.
     """
     for i_out, out in enumerate(
-        conv1d.get_log_posbias().detach().cpu().unbind(1)
+        conv1d.get_log_posbias().detach().float().cpu().unbind(1)
     ):
         if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
             out = out[conv1d.min_input_length :]
@@ -354,6 +358,7 @@ def cooperativity(
                 spacing_matrix.max_num_windows, spacing_matrix.max_num_windows
             )
             .detach()
+            .float()
             .cpu()
         )
         cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
@@ -496,8 +501,8 @@ def _enrichment(
         n_bins += len(cols_obs)
 
         # Calculate enrichment
-        x_pred = (cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)
-        y_obs = (cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)
+        x_pred = ((cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)).float()
+        y_obs = ((cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)).float()
 
         # Update range
         min_range = min(min_range, x_pred.min().item(), y_obs.min().item())
@@ -562,10 +567,8 @@ def probe_enrichment(
         save: The basename to write the plot to, if provided.
     """
 
-    counts_obs, counts_pred = score(
-        experiment, batch, fun="log_prediction", target=batch.target
-    )
-    counts_pred = counts_pred.exp()
+    counts_obs, counts_pred = score(experiment, batch)
+    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
 
@@ -605,10 +608,8 @@ def kmer_enrichment(
         save: The basename to write the plot to, if provided.
     """
 
-    counts_obs, counts_pred = score(
-        experiment, batch, fun="log_prediction", target=batch.target
-    )
-    counts_pred = counts_pred.exp()
+    counts_obs, counts_pred = score(experiment, batch)
+    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     kmer_counts = count_kmers(batch.seqs, kmer_length=kmer_length)
     counts_obs = kmer_counts @ counts_obs
     counts_pred = kmer_counts @ counts_pred
@@ -666,10 +667,8 @@ def kd_consistency(
     )
 
     # Get counts of all rounds
-    counts_obs, counts_pred = score(
-        experiment, batch, fun="log_prediction", target=batch.target
-    )
-    counts_pred = counts_pred.exp()
+    counts_obs, counts_pred = score(experiment, batch)
+    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
 
     # Sort by Ka
     sorting = torch.argsort(k_a)
@@ -767,10 +766,8 @@ def keff_consistency(
     _, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
 
     # Get counts of all rounds
-    counts_obs, counts_pred = score(
-        experiment, batch, fun="log_prediction", target=batch.target
-    )
-    counts_pred = counts_pred.exp()
+    counts_obs, counts_pred = score(experiment, batch)
+    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
 
     n_bins = 0
     for e_col in columns:

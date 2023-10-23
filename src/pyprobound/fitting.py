@@ -286,6 +286,7 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         save: str | None = None,
     ) -> None:
         """Plots predicted validation values with error bars and binning."""
+        pred, obs = pred.float(), obs.float()
         if kernel > 1:
             sorting = torch.argsort(pred, dim=0, descending=True)
             pred = avg_pool1d(pred[sorting], kernel=kernel)

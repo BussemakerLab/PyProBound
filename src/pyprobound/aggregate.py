@@ -35,6 +35,7 @@ class Contribution(Transform):
         binding: Binding,
         train_activity: bool = True,
         log_activity: float = float("-inf"),
+        activity_heuristic: float = 0.05,
         name: str = "",
     ) -> None:
         r"""Initializes the contribution model.
@@ -43,15 +44,24 @@ class Contribution(Transform):
             binding: The Binding component whose contribution will be modeled.
             train_activity: Whether to train the activity :math:`\alpha`.
             log_activity: The initial value of `log_activity`.
+            activity_heuristic: The fraction of the total aggregate that the
+                contribution will be set to when it is first optimized.
             name: A string used to describe the round.
         """
         super().__init__(name=name)
+
+        if not 0 < activity_heuristic < 1:
+            raise ValueError(
+                f"activity_heuristic={activity_heuristic} is not 0 < frac < 1"
+            )
+
         self.binding = binding
         self.train_activity = train_activity
         self.log_activity = torch.nn.Parameter(
             torch.tensor(log_activity, dtype=__precision__),
             requires_grad=self.train_activity,
         )
+        self.activity_heuristic = activity_heuristic
 
     @override
     def components(self) -> Iterator[Binding]:
@@ -176,6 +186,7 @@ class Aggregate(Transform):
         binding: Iterable[Binding],
         train_concentration: bool = False,
         target_concentration: float = 1,
+        activity_heuristic: float = 0.05,
         name: str = "",
     ) -> Self:
         r"""Creates a new instance from the binding modes.
@@ -185,10 +196,15 @@ class Aggregate(Transform):
             train_concentration: Whether to train the protein concentration.
             target_concentration: Protein concentration, used for estimating
                 the free protein concentration.
+            activity_heuristic: The fraction of the total aggregate that the
+                contribution will be set to when it is first optimized.
             name: A string used to describe the round.
         """
         return cls(
-            (Contribution(bmd) for bmd in binding),
+            (
+                Contribution(bmd, activity_heuristic=activity_heuristic)
+                for bmd in binding
+            ),
             train_concentration=train_concentration,
             target_concentration=target_concentration,
             name=name,
@@ -283,14 +299,17 @@ class Aggregate(Transform):
         return self.log_target_concentration + out
 
     def activity_heuristic(
-        self, contribution: Contribution, frac: float = 0.05
+        self, contribution: Contribution, frac: float | None = None
     ) -> None:
         """Sets the activity so that E[contribution] = frac * E[aggregate].
 
         Args:
             contribution: The Contribution whose activity will be updated.
-            frac: The proportion of the aggregate the Binding contributes.
+            frac: The proportion of the aggregate the Binding contributes. If
+                None, uses the activity_heuristic attribute of Contribution.
         """
+        if frac is None:
+            frac = contribution.activity_heuristic
         if not 0 < frac < 1:
             raise ValueError(f"frac={frac} is not 0 < frac < 1")
 
