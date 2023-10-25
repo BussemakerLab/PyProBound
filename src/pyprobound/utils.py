@@ -1,6 +1,6 @@
 """Typed helper functions."""
 
-from typing import cast, overload
+from typing import overload
 
 import torch
 import torch.mps
@@ -88,14 +88,7 @@ def betaln(z_1: Tensor, z_2: Tensor) -> Tensor:
     .. math::
         \log \frac{\Gamma(z_1) \Gamma(z_2)}{\Gamma(z_1 + z_2)}
     """
-    return cast(
-        Tensor,
-        (
-            torch.special.gammaln(z_1)
-            + torch.special.gammaln(z_2)
-            - torch.special.gammaln(z_1 + z_2)
-        ),
-    )
+    return torch.lgamma(z_1) + torch.lgamma(z_2) - torch.lgamma(z_1 + z_2)
 
 
 def avg_pool1d(tensor: Tensor, kernel: int = 1) -> Tensor:

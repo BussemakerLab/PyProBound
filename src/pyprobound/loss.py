@@ -95,8 +95,7 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                 regularization.
             equalize_contribution: Whether to update the weights so that the
                 rescaled losses are constant relative to each other.
-            max_split: Maximum number of sequences scored at a time
-                (lower values reduce memory but increase computation time).
+            max_split: Maximum number of sequences scored at a time.
         """
         super().__init__(name="")
 
@@ -291,8 +290,8 @@ class MultiExperimentLoss(LossModule[CountBatch]):
 
         try:
             # Calculate loss for each experiment
-            for exp, sample in zip(self.experiments, batch, strict=True):
-                device = exp.rounds[0].log_depth.device
+            for expt, sample in zip(self.experiments, batch, strict=True):
+                device = expt.rounds[0].log_depth.device
                 split_size = get_split_size(
                     self.max_embedding_size(),
                     len(sample.seqs)
@@ -311,17 +310,17 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                     seqs, target = seqs.to(device), target.to(device)
                     if self.full_loss:
                         loglik = (
-                            (target * exp.log_prediction(seqs, target))
+                            (target * expt.log_prediction(seqs, target))
                             - target
-                            - cast(Tensor, torch.special.gammaln(target + 1))
+                            - torch.lgamma(target + 1)
                         )
                     else:
-                        loglik = target * exp(seqs)
+                        loglik = target * expt(seqs)
                     curr_nll -= torch.sum(loglik)
                     sum_counts += torch.sum(target)
 
                 neglogliks.append(curr_nll / sum_counts)
-                regularizations.append(self.regularization(exp))
+                regularizations.append(self.regularization(expt))
 
         except ValueError as e:
             raise ValueError(

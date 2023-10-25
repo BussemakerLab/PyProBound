@@ -555,6 +555,7 @@ def probe_enrichment(
     batch: CountBatch,
     columns: list[int] | None = None,
     kernel: int = 500,
+    max_split: int | None = None,
     save: str | None = None,
 ) -> None:
     """Plots the enrichment of sequences, binned by predicted enrichment.
@@ -564,10 +565,11 @@ def probe_enrichment(
         batch: A batch corresponding to the provided experiment.
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of enrichment-sorted sequences.
+        max_split: Maximum number of sequences scored at a time.
         save: The basename to write the plot to, if provided.
     """
 
-    counts_obs, counts_pred = score(experiment, batch)
+    counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
     counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
@@ -596,6 +598,7 @@ def kmer_enrichment(
     columns: list[int] | None = None,
     kmer_length: int = 3,
     kernel: int = 500,
+    max_split: int | None = None,
     save: str | None = None,
 ) -> None:
     """Plots the enrichment of k-mers, binned by predicted enrichment.
@@ -605,10 +608,11 @@ def kmer_enrichment(
         batch: A batch corresponding to the provided experiment.
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of enrichment-sorted k-mers.
+        max_split: Maximum number of sequences scored at a time.
         save: The basename to write the plot to, if provided.
     """
 
-    counts_obs, counts_pred = score(experiment, batch)
+    counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
     counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     kmer_counts = count_kmers(batch.seqs, kmer_length=kmer_length)
     counts_obs = kmer_counts @ counts_obs
@@ -643,6 +647,7 @@ def kd_consistency(
     u_index: int,
     batch: CountBatch,
     kernel: int = 500,
+    max_split: int | None = None,
     save: str | None = None,
 ) -> None:
     """Plots the bound and unbound fractions, binned by predicted Kd.
@@ -654,6 +659,7 @@ def kd_consistency(
         u_index: The index of the UnboundRound.
         batch: A batch corresponding to the provided experiment.
         kernel: The bin for average pooling of Kd-sorted sequences.
+        max_split: Maximum number of sequences scored at a time.
         save: The basename to write the plot to, if provided.
     """
 
@@ -663,11 +669,12 @@ def kd_consistency(
     u_round = experiment.rounds[u_index]
     free_protein = experiment.free_protein(i_index, b_index, u_index)
     k_a = torch.exp(
-        score(b_round, batch, "log_aggregate")[1] - math.log(free_protein)
+        score(b_round, batch, fun="log_aggregate", max_split=max_split)[1]
+        - math.log(free_protein)
     )
 
     # Get counts of all rounds
-    counts_obs, counts_pred = score(experiment, batch)
+    counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
     counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
 
     # Sort by Ka
@@ -745,6 +752,7 @@ def keff_consistency(
     batch: CountBatch,
     columns: list[int] | None = None,
     kernel: int = 500,
+    max_split: int | None = None,
     save: str | None = None,
 ) -> None:
     """Plots the modified fraction, binned by predicted Kd.
@@ -754,6 +762,7 @@ def keff_consistency(
         batch: A batch corresponding to the provided experiment.
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of Kd-sorted sequences.
+        max_split: Maximum number of sequences scored at a time.
         save: The basename to write the plot to, if provided.
     """
     if columns is None:
@@ -766,7 +775,7 @@ def keff_consistency(
     _, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
 
     # Get counts of all rounds
-    counts_obs, counts_pred = score(experiment, batch)
+    counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
     counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
 
     n_bins = 0
@@ -781,7 +790,9 @@ def keff_consistency(
         i_round = experiment.rounds[i_col]
 
         # Get k_eff
-        k_eff = torch.exp(score(e_round, batch, "log_aggregate")[1])
+        k_eff = torch.exp(
+            score(e_round, batch, fun="log_aggregate", max_split=max_split)[1]
+        )
 
         # Get counts
         cols_pred = counts_pred[:, [i_col, e_col]]
@@ -849,6 +860,7 @@ def contribution(
     rnd: BaseRound | Aggregate,
     batch: CountBatch,
     kernel: int = 500,
+    max_split: int | None = None,
     save: str | None = None,
 ) -> None:
     """Plots the predicted relative contribution of every Binding component.
@@ -857,13 +869,15 @@ def contribution(
         rnd: A component containing an aggregate of different modes.
         batch: A batch corresponding to the provided experiment.
         kernel: The bin for average pooling of Kd-sorted sequences.
+        max_split: Maximum number of sequences scored at a time.
         save: The basename to write the plot to, if provided.
     """
 
     _, log_aggregate = score(
         rnd,
         batch,
-        "forward" if isinstance(rnd, Aggregate) else "log_aggregate",
+        fun="forward" if isinstance(rnd, Aggregate) else "log_aggregate",
+        max_split=max_split,
     )
 
     bmd_names: list[str] = []
@@ -871,7 +885,9 @@ def contribution(
     for ctrb in [m for m in rnd.modules() if isinstance(m, Contribution)]:
         bmd = ctrb.binding
         bmd_names.append("-".join(i.name for i in bmd.key()))
-        bmd_contributions_list.append(score(ctrb, batch)[1].unsqueeze(1))
+        bmd_contributions_list.append(
+            score(ctrb, batch, max_split=max_split)[1].unsqueeze(1)
+        )
     bmd_contributions = torch.cat(bmd_contributions_list, dim=1)
 
     fig, axs = plt.subplots(

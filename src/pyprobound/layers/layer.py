@@ -207,16 +207,10 @@ class Layer(Transform, LengthManager):
 
     @override
     def check_length_consistency(self) -> None:
-        if (
-            not 1
-            <= self.min_input_length
-            <= self.input_shape
-            <= self.max_input_length
-        ):
+        if not 1 <= self.min_input_length <= self.max_input_length:
             raise RuntimeError(
-                f"The attribute ordering does not hold:"
+                f"The ordering does not hold:"
                 f" 1 <= min_input_length={self.min_input_length}"
-                f"  <= input_shape={self.input_shape}"
                 f"  <= max_input_length={self.max_input_length}"
             )
         if self.out_len(self.min_input_length, mode="min") < 1:

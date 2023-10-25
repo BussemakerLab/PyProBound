@@ -68,7 +68,11 @@ class CountBatchTuple(NamedTuple):
 
 
 def score(
-    module: Transform, batch: CountBatch, fun: str = "forward", **kwargs: Any
+    module: Transform,
+    batch: CountBatch,
+    fun: str = "forward",
+    max_split: int | None = None,
+    **kwargs: Any,
 ) -> tuple[Tensor, Tensor]:
     """Scores a batch using a chosen function, automatically managing devices.
 
@@ -76,6 +80,7 @@ def score(
         module: The Transform used for scoring.
         batch: The CountBatch containing the sequences and counts to be scored.
         fun: The name of the function taken from the module for scoring.
+        max_split: Maximum number of sequences scored at a time.
         kwargs: Any keyword arguments passed to the function.
 
     Returns:
@@ -86,7 +91,11 @@ def score(
         device = p.device
         break
     split_size = get_split_size(
-        module.max_embedding_size(), len(batch.seqs), device
+        module.max_embedding_size(),
+        len(batch.seqs)
+        if max_split is None
+        else min(max_split, len(batch.seqs)),
+        device,
     )
 
     predictions: list[Tensor] = []
@@ -203,7 +212,7 @@ def sample_counts(
     n_counts: int = 1_000_000,
     random_state: int | None = None,
 ) -> DataFrame:
-    """Randomly samples `n_counts` total counts from a dataframe.
+    """Randomly samples `n_counts` total counts each column of a dataframe.
 
     Args:
         dataframe: The dataframe to sample counts from.
@@ -213,12 +222,13 @@ def sample_counts(
     Returns:
         A dataframe with approximately `n_counts` total counts.
     """
-    total = dataframe.iloc[:, 0].sum()
     generator = np.random.default_rng(random_state)
-    dataframe.iloc[:, 0] = generator.binomial(
-        dataframe.iloc[:, 0], min(1, n_counts / total)
-    )
-    return dataframe[dataframe.iloc[:, 0] != 0]
+    for i in range(dataframe.shape[1]):
+        total = dataframe.iloc[:, i].sum()
+        dataframe.iloc[:, i] = generator.binomial(
+            dataframe.iloc[:, i], min(1, n_counts / total)
+        )
+    return dataframe[dataframe.sum(axis=1) != 0]
 
 
 class Table(Dataset[T], Generic[T], Sized, abc.ABC):

@@ -119,6 +119,24 @@ class BindingOptim(NamedTuple):
             if step_idx not in dropped_step_indices
         ]
 
+        # Move 'unfreeze all' to the end
+        try:
+            idx = self.steps.index(
+                Step(
+                    [
+                        Call(
+                            next(iter(self.ancestry))[0],
+                            "unfreeze",
+                            {"parameter": "all"},
+                        )
+                    ]
+                )
+            )
+            step = self.steps.pop(idx)
+            self.steps.append(step)
+        except ValueError:
+            pass
+
 
 class Component(torch.nn.Module, abc.ABC):
     """Module that serves as a component in PyProBound.
@@ -274,6 +292,16 @@ class Component(torch.nn.Module, abc.ABC):
                 f"{type(self).__name__} cannot unfreeze parameter {parameter}"
             )
 
+    def check_length_consistency(self) -> None:
+        """Checks that input lengths of Binding components are consistent.
+
+        Raises:
+            RuntimeError: There is an input mismatch between components.
+        """
+        bindings = {m for m in self.modules() if isinstance(m, Binding)}
+        for binding in bindings:
+            binding.check_length_consistency()
+
     def optim_procedure(
         self,
         ancestry: tuple[Component, ...] | None = None,
@@ -359,24 +387,6 @@ class Transform(Component):
     transformations that appear multiple times in a loss module. See
     https://github.com/pytorch/pytorch/issues/45414 for typing information.
     """
-
-    def check_length_consistency(self) -> None:
-        """Checks that input lengths of Binding components are consistent.
-
-        Raises:
-            RuntimeError: There is an input mismatch between components.
-        """
-        bindings = {m for m in self.modules() if isinstance(m, Binding)}
-        for binding in bindings:
-            binding.check_length_consistency()
-
-    @override
-    def optim_procedure(
-        self,
-        ancestry: tuple[Component, ...] | None = None,
-        current_order: dict[tuple[Spec, ...], BindingOptim] | None = None,
-    ) -> dict[tuple[Spec, ...], BindingOptim]:
-        return super().optim_procedure(ancestry, current_order)
 
     @override
     @abc.abstractmethod
@@ -475,16 +485,7 @@ class Binding(Transform, abc.ABC):
         """Uninformative prior of input, used for calculating expectations."""
 
     def expected_log_score(self) -> float:
-        r"""Calculates the expected log score.
-
-        Args:
-            seqs: A sequence tensor of shape
-                :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
-
-        Returns:
-            The expected log score represented as a float.
-        """
+        """Calculates the expected log score."""
         with torch.inference_mode():
             training = self.training
             self.eval()

@@ -711,6 +711,7 @@ class Optimizer(Generic[T]):
 
                 # Run calls
                 self.run_step(step)
+                self.save(self.checkpoint)
 
                 # Don't optimize if no parameters can be trained
                 if not any(p.requires_grad for p in self.model.parameters()):

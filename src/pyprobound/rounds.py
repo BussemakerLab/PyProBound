@@ -40,7 +40,7 @@ class BaseRound(Transform, abc.ABC):
         Args:
             reference_round: The previous round used in cumulative enrichment.
             train_depth: Whether to train the sequencing depth :math:`\eta`.
-            log_depth: Initial value of `log_depth`.
+            log_depth: The initial value of `log_depth`.
             library_concentration: The total library concentration, used for
                 estimating the free protein concentration.
             name: A string used to describe the round.
@@ -550,7 +550,7 @@ class ExponentialRound(Round):
             log_depth: The initial value of `log_depth`.
             library_concentration: The total library concentration, used for
                 estimating the free protein concentration.
-            delta: Initial value of :math:`\delta`.
+            delta: The initial value of :math:`\delta`.
             train_delta: Whether to train the `delta` parameter.
             name: A string used to describe the round.
         """
@@ -633,7 +633,7 @@ class ExponentialRound(Round):
             activity_heuristic: The fraction of the total aggregate that the
                 contribution will be set to when it is first optimized.
             name: A string used to describe the round.
-            delta: Initial value of :math:`\delta`.
+            delta: The initial value of :math:`\delta`.
             train_delta: Whether to train the `delta` parameter.
         """
         return cls(

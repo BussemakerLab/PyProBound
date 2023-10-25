@@ -79,16 +79,7 @@ class Contribution(Transform):
             super().unfreeze(parameter)
 
     def expected_log_contribution(self) -> float:
-        r"""Calculates the expected log contribution.
-
-        Args:
-            seqs: A sequence tensor of shape
-                :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
-
-        Returns:
-            The expected log contribution represented as a float.
-        """
+        """Calculates the expected log contribution."""
         with torch.inference_mode():
             training = self.training
             self.eval()
@@ -255,16 +246,7 @@ class Aggregate(Transform):
         return current_order
 
     def expected_log_aggregate(self) -> float:
-        r"""Calculates the expected log aggregate.
-
-        Args:
-            seqs: A sequence tensor of shape
-                :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
-
-        Returns:
-            The expected log aggregate represented as a float.
-        """
+        """Calculates the expected log aggregate."""
         with torch.inference_mode():
             training = self.training
             self.eval()

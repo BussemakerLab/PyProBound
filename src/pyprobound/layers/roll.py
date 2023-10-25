@@ -104,7 +104,7 @@ class Roll(Layer):
                 sequence.
             max_input_length: The maximum number of finite elements in an input
                 sequence.
-            name: A string used to describe the maxpooling layer.
+            name: A string used to describe the roll layer.
         """
         super().__init__(
             layer_spec=layer_spec,
