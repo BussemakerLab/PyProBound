@@ -111,35 +111,6 @@ class Experiment(Transform):
         out = torch.stack([rnd(seqs) for rnd in self.observed_rounds], dim=1)
         return out - out.logsumexp(dim=1, keepdim=True)
 
-    def log_prediction(self, seqs: Tensor, target: Tensor) -> Tensor:
-        r"""Predicts the log count table :math:`E[\log k_{i, r}]`.
-
-        .. math::
-            E[\log k_{i, r}] = \log \frac{\eta_{r} f_{i,r}}{
-                \sum_{r^\prime} \eta_{i} f_{i, r^\prime}
-            }  \sum_{r^\prime} k_{i, r^\prime}
-
-        Args:
-            seqs: A sequence tensor of shape
-                :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
-            target: A count tensor of shape
-                :math:`(\text{minibatch},\text{rounds})`.
-
-        Returns:
-            The log count tensor of shape
-            :math:`(\text{minibatch},\text{rounds})`.
-        """
-        log_frequencies = self(seqs)
-        if log_frequencies.shape != target.shape:
-            raise ValueError(
-                f"Predicted table shape {log_frequencies.shape}"
-                f" incompatible with observed table shape {target.shape}"
-            )
-        return log_frequencies + torch.log(
-            torch.sum(target, dim=1, keepdim=True).to(log_frequencies.device)
-        )
-
     def free_protein(
         self,
         i_index: int,

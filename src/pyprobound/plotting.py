@@ -379,7 +379,7 @@ def cooperativity(
         )
 
     # Draw subplots
-    max_val = max(np.nanmax(abs(1 - out)), 1e-7)
+    max_val = max(np.nanmax(out.log().nan_to_num(0, 0, 0).abs()), 1e-7)
     norm = matplotlib.colors.LogNorm(
         vmin=np.exp(-max_val), vmax=np.exp(max_val)
     )

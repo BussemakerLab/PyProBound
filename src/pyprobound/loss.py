@@ -310,7 +310,11 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                     seqs, target = seqs.to(device), target.to(device)
                     if self.full_loss:
                         loglik = (
-                            (target * expt.log_prediction(seqs, target))
+                            (target * expt(seqs))
+                            + (
+                                target
+                                * torch.log(target.sum(dim=1, keepdim=True))
+                            )
                             - target
                             - torch.lgamma(target + 1)
                         )

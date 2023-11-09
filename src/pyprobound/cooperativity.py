@@ -255,7 +255,11 @@ class Spacing(Spec):
             log_spacing = torch.cat(
                 (
                     log_spacing.flatten(-3, -2),
-                    log_spacing.flip(-3).flatten(-3, -2),
+                    log_spacing.flatten(-2, -1)
+                    .flip(-1)
+                    .reshape((self.n_strands, n_windows_a, n_windows_b))
+                    .flip(-3)
+                    .flatten(-3, -2),
                 ),
                 -1,
             )
