@@ -82,6 +82,12 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
 
         super().test_in_len()
 
+    @override
+    def test_update_limit(self) -> None:
+        if self.layer.bias_mode == "reverse":
+            self.skipTest("Cannot test limit with reverse bias mode")
+        super().test_update_limit()
+
     def check_nans(self, tensor: Tensor) -> None:
         self.assertFalse(
             torch.any(torch.isnan(tensor)), "output contains NaNs"
@@ -227,6 +233,8 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_increase_flank(self) -> None:
+        if self.layer.bias_mode == "reverse":
+            self.skipTest("Cannot increase flank with reverse bias mode")
         del self.count_table[100:]
         shift = self.layer.bias_bin
         prev_score = self.layer(self.count_table.seqs)
@@ -390,6 +398,72 @@ class TestConv1d_4di1_bin1_dense(TestConv1d_4_dense):
             unfold=True,
             train_posbias=True,
             bias_bin=1,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4di1_bin1nolength(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            unfold=True,
+            train_posbias=True,
+            bias_bin=1,
+            length_specific_bias=False,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4di1_bin1same(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            unfold=True,
+            train_posbias=True,
+            bias_bin=1,
+            bias_mode="same",
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4di1_bin1reverse(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            unfold=True,
+            train_posbias=True,
+            bias_bin=1,
+            bias_mode="reverse",
             one_hot=False,
             normalize=False,
         )

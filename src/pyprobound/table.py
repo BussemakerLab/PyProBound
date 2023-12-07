@@ -17,6 +17,7 @@ import functools
 import gzip
 import itertools
 import os
+import warnings
 from collections.abc import Callable, Iterable, Iterator, Sized
 from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast
 
@@ -328,7 +329,7 @@ class CountTable(Table[CountBatch]):
 
         # Check dataframe
         if any((dataframe <= 0).all(axis=1)):
-            raise ValueError(
+            warnings.warn(
                 "Some sequences do not have a positive count in any round"
             )
 

@@ -108,7 +108,11 @@ class Conv1d(Layer):
         self._bias_mode = bias_mode
         self._bias_bin = bias_bin
         self._length_specific_bias = length_specific_bias
-        self._out_channel_indexing = out_channel_indexing
+        self._out_channel_indexing = (
+            list(out_channel_indexing)
+            if out_channel_indexing is not None
+            else None
+        )
 
         # Create posbias parameter
         n_windows = self._num_windows(self.input_shape)
@@ -213,7 +217,7 @@ class Conv1d(Layer):
         return self._length_specific_bias
 
     @property
-    def out_channel_indexing(self) -> Sequence[int] | None:
+    def out_channel_indexing(self) -> list[int] | None:
         """Output channel indexing, equivalent to
         `Conv1d(seqs)[:,out_channel_indexing]`."""
         return self._out_channel_indexing
@@ -321,6 +325,8 @@ class Conv1d(Layer):
     ) -> None:
         """Updates biases according to specified padding values."""
         del binding_mode_left, binding_mode_right
+        if not self.length_specific_bias:
+            length_front, length_back = 0, 0
         old_window_top, old_window_bottom = window_top, window_bottom
         window_top = self._num_windows(
             self.input_shape + old_window_top
@@ -382,9 +388,10 @@ class Conv1d(Layer):
         log_posbias: Tensor = self.log_posbias
         if self.normalize:
             log_posbias = log_posbias - log_posbias.mean(dim=-1, keepdim=True)
-        log_posbias = log_posbias.repeat_interleave(self.bias_bin, -1)[
-            ..., : self.out_len(self.input_shape)
-        ]
+        if self.bias_bin > 1:
+            log_posbias = log_posbias.repeat_interleave(self.bias_bin, -1)[
+                ..., : self.out_len(self.input_shape)
+            ]
         if self.bias_mode == "reverse":
             log_posbias = torch.cat((log_posbias, log_posbias.flip(-1)), dim=1)
         if self.length_specific_bias:
@@ -420,6 +427,8 @@ class Conv1d(Layer):
             current = seqs
 
         matrix = self.layer_spec.get_filter(0)
+        if self.out_channel_indexing is not None:
+            matrix = matrix[self.out_channel_indexing]
 
         if self.unfold:
             unfold = current.unfold(2, matrix.shape[2], 1)
@@ -437,6 +446,8 @@ class Conv1d(Layer):
 
         for dist in range(1, self.layer_spec.pairwise_distance + 1):
             matrix = self.layer_spec.get_filter(dist)
+            if self.out_channel_indexing is not None:
+                matrix = matrix[self.out_channel_indexing]
             if (not matrix.requires_grad) and (not torch.any(matrix != 0)):
                 continue
             matrix = matrix.flatten(1, 2)
@@ -471,11 +482,16 @@ class Conv1d(Layer):
 
         if posbias is not None:
             result += posbias
+
+        # Add in PSAM bias
+        bias = self.layer_spec.get_bias()
+        if self.out_channel_indexing is not None:
+            bias = bias[self.out_channel_indexing]
         return (
             result.nan_to_num(
                 nan=float("-inf"), neginf=float("-inf"), posinf=float("-inf")
             )
-            + self.layer_spec.get_bias()
+            + bias
         )
 
     def score_dense(
@@ -496,6 +512,8 @@ class Conv1d(Layer):
 
         # Get matrix
         matrix = self.layer_spec.get_filter(0)
+        if self.out_channel_indexing is not None:
+            matrix = matrix[self.out_channel_indexing]
         matrix = F.pad(matrix, (0, 0, 0, 1), value=float("-inf"))
         matrix = torch.cat(
             [matrix, matrix[:, :-1].mean(1, keepdim=True)], dim=1
@@ -527,6 +545,8 @@ class Conv1d(Layer):
                 [matrix, matrix[:, :, :-1].mean(2, keepdim=True)], dim=2
             )
             matrix = F.pad(matrix, (0, 0, 0, 1, 0, 1))
+            if self.out_channel_indexing is not None:
+                matrix = matrix[self.out_channel_indexing]
 
             # Get sliding windows
             unfold2 = unfold.unfold(-1, dist + 1, 1)
@@ -553,7 +573,11 @@ class Conv1d(Layer):
         if posbias is not None:
             out += posbias
 
-        return out + self.layer_spec.get_bias()
+        # Add in PSAM bias
+        bias = self.layer_spec.get_bias()
+        if self.out_channel_indexing is not None:
+            bias = bias[self.out_channel_indexing]
+        return out + bias
 
     @override
     def forward(self, seqs: Tensor) -> Tensor:
@@ -607,13 +631,5 @@ class Conv1d(Layer):
 
         # Score
         if self.one_hot or seqs.ndim == 3 or requires_embedding:
-            if self.out_channel_indexing is not None:
-                return self.score_onehot(seqs, posbias)[
-                    :, self.out_channel_indexing
-                ]
             return self.score_onehot(seqs, posbias)
-        if self.out_channel_indexing is not None:
-            return self.score_dense(seqs, posbias)[
-                :, self.out_channel_indexing
-            ]
         return self.score_dense(seqs, posbias)

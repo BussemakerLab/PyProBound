@@ -14,7 +14,7 @@ from .test_binding import initialize_binding
 def initialize_cooperativity(
     binding_cooperativity: pyprobound.Cooperativity,
 ) -> None:
-    torch.nn.init.normal_(binding_cooperativity.spacing.flat_log_spacing)
+    torch.nn.init.normal_(binding_cooperativity.spacing.log_spacing)
     if binding_cooperativity.train_posbias:
         torch.nn.init.normal_(binding_cooperativity.log_posbias)
     else:
@@ -66,40 +66,24 @@ class TestCooperativity_5__3(unittest.TestCase):
         initialize_cooperativity(self.binding_cooperativity)
         self.binding_cooperativity.check_length_consistency()
 
-    def test_embedding_size(self) -> None:
-        windows = self.binding_cooperativity.score_windows(
-            self.count_table.seqs[:1]
-        )
-        expected_embedding_size = windows.numel() * windows.element_size()
-        expected_embedding_size = max(
-            self.binding_cooperativity.mode_a.max_embedding_size(),
-            self.binding_cooperativity.mode_b.max_embedding_size(),
-            expected_embedding_size,
-        )
-        self.assertEqual(
-            self.binding_cooperativity.max_embedding_size(),
-            expected_embedding_size,
-            "incorrect embedding size",
-        )
-
     def test_spacing_gauge(self) -> None:
         spacing = self.binding_cooperativity.spacing
         zero_gauge: Tensor | None = None
         for i in range(1, spacing.max_num_windows + 1):
             for j in range(1, spacing.max_num_windows + 1):
                 if zero_gauge is None:
-                    zero_gauge = spacing.get_log_spacing(i, j)[0, 0]
+                    zero_gauge = spacing.get_log_spacing_matrix(i, j)[
+                        0, 0, 0, 0
+                    ]
                 self.assertEqual(
                     zero_gauge,
-                    spacing.get_log_spacing(i, j)[0, 0],
+                    spacing.get_log_spacing_matrix(i, j)[0, 0, 0, 0],
                     "Spacing main diagonal inconsistent with changing windows",
                 )
 
     def test_spacing(self) -> None:
-        prev_posbias = self.binding_cooperativity.log_posbias
-        self.binding_cooperativity.log_posbias.requires_grad_(False)
-        torch.nn.init.zeros_(self.binding_cooperativity.log_posbias)
-
+        if self.binding_cooperativity.train_posbias:
+            self.skipTest("Can't test spacing if trained posbias")
         windows_a = self.binding_cooperativity.mode_a.score_windows(
             self.count_table.seqs
         )
@@ -121,10 +105,10 @@ class TestCooperativity_5__3(unittest.TestCase):
                     if j < 0 or j >= windows_b.shape[-1]:
                         continue
                     mock_windows_a_return = torch.full_like(
-                        windows_a[:1], float("-inf")
+                        windows_a, float("-inf")
                     )
                     mock_windows_b_return = torch.full_like(
-                        windows_b[:1], float("-inf")
+                        windows_b, float("-inf")
                     )
                     mock_windows_a_return[..., i] = 0
                     mock_windows_b_return[..., j] = 0
@@ -138,11 +122,22 @@ class TestCooperativity_5__3(unittest.TestCase):
                         "Cooperativity not scoring spacings equally",
                     )
 
-        self.binding_cooperativity.log_posbias = prev_posbias
-
     def check_nans(self, tensor: Tensor) -> None:
         self.assertFalse(
             torch.any(torch.isnan(tensor)), "output contains NaNs"
+        )
+
+    def test_windows(self) -> None:
+        dense_out = self.binding_cooperativity(self.count_table.seqs)
+        window_out = (
+            torch.exp(self.binding_cooperativity.log_hill)
+            * self.binding_cooperativity.score_windows(self.count_table.seqs)
+        ).logsumexp((-1, -2, -3, -4))
+        self.check_nans(dense_out)
+        self.check_nans(window_out)
+        self.assertTrue(
+            torch.allclose(dense_out, window_out, atol=1e-6),
+            "dense and window outputs do not match",
         )
 
     def test_shift_footprint(self) -> None:
@@ -208,7 +203,9 @@ class TestCooperativity_5__3(unittest.TestCase):
             all(isinstance(i, pyprobound.layers.Conv1d) for i in bmd.layers)
             for bmd in self.binding_cooperativity.components()
         ):
-            self.skipTest("Can't test spacing if any non-Conv1d layers")
+            self.skipTest("Can't test shift spacing if any non-Conv1d layers")
+        if self.binding_cooperativity.bias_mode == "reverse":
+            self.skipTest("Can't test shift spacing if reverse-mode posbias")
 
         # store and strip out length information
         info: list[dict[str, torch.nn.Parameter]] = []
@@ -218,7 +215,7 @@ class TestCooperativity_5__3(unittest.TestCase):
                     info.append({})
                     continue
                 info.append({"prev_posbias": layer.log_posbias})
-                layer.log_posbias.requires_grad_(False)
+                layer.log_posbias.requires_grad_()
                 layer.log_posbias.zero_()
 
         # establish baseline
@@ -245,15 +242,8 @@ class TestCooperativity_5__3(unittest.TestCase):
         curr_score = self.binding_cooperativity(self.count_table.seqs)
         self.assertTrue(
             torch.allclose(curr_score, prev_score),
-            "incorrect output after increasing left flank",
+            "incorrect output after decreasing left flank",
         )
-
-        # restore conv1d attributes
-        for bmd in self.binding_cooperativity.components():
-            for layer, layer_info in zip(bmd.layers, info):
-                if not isinstance(layer, pyprobound.layers.Conv1d):
-                    continue
-                layer.log_posbias = layer_info["prev_posbias"]
 
 
 class TestCooperativity_5__3__norev(TestCooperativity_5__3):
@@ -341,6 +331,51 @@ class TestCooperativity_5__3__posbias(TestCooperativity_5__3):
             binding_mode_a,
             binding_mode_b,
             train_posbias=True,
+            normalize=False,
+        )
+        initialize_cooperativity(self.binding_cooperativity)
+        self.binding_cooperativity.check_length_consistency()
+
+
+class TestCooperativity_5__3__hill(TestCooperativity_5__3):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        binding_mode_a = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=5,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        binding_mode_b = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=3,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        self.binding_cooperativity = pyprobound.Cooperativity(
+            pyprobound.Spacing(
+                binding_mode_a.key(), binding_mode_b.key(), normalize=False
+            ),
+            binding_mode_a,
+            binding_mode_b,
+            train_hill=True,
             normalize=False,
         )
         initialize_cooperativity(self.binding_cooperativity)
@@ -438,6 +473,144 @@ class TestCooperativity_5__3__posbias_over2_spacing5(TestCooperativity_5__3):
             binding_mode_b,
             train_posbias=True,
             normalize=False,
+        )
+        initialize_cooperativity(self.binding_cooperativity)
+        self.binding_cooperativity.check_length_consistency()
+
+
+class TestCooperativity_5__3__no_length_posbias(TestCooperativity_5__3):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        binding_mode_a = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=5,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        binding_mode_b = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=3,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        self.binding_cooperativity = pyprobound.Cooperativity(
+            pyprobound.Spacing(
+                binding_mode_a.key(), binding_mode_b.key(), normalize=False
+            ),
+            binding_mode_a,
+            binding_mode_b,
+            train_posbias=True,
+            normalize=False,
+            length_specific_bias=False,
+        )
+        initialize_cooperativity(self.binding_cooperativity)
+        self.binding_cooperativity.check_length_consistency()
+
+
+class TestCooperativity_5__3__same_posbias(TestCooperativity_5__3):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        binding_mode_a = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=5,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        binding_mode_b = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=3,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        self.binding_cooperativity = pyprobound.Cooperativity(
+            pyprobound.Spacing(
+                binding_mode_a.key(), binding_mode_b.key(), normalize=False
+            ),
+            binding_mode_a,
+            binding_mode_b,
+            train_posbias=True,
+            normalize=False,
+            bias_mode="same",
+        )
+        initialize_cooperativity(self.binding_cooperativity)
+        self.binding_cooperativity.check_length_consistency()
+
+
+class TestCooperativity_5__3__reverse_posbias(TestCooperativity_5__3):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        binding_mode_a = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=5,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        binding_mode_b = pyprobound.Mode(
+            [
+                pyprobound.layers.Conv1d.from_psam(
+                    pyprobound.layers.PSAM(
+                        alphabet=self.count_table.alphabet,
+                        kernel_size=3,
+                        information_threshold=0.0,
+                        normalize=False,
+                    ),
+                    self.count_table,
+                    normalize=False,
+                )
+            ]
+        )
+        self.binding_cooperativity = pyprobound.Cooperativity(
+            pyprobound.Spacing(
+                binding_mode_a.key(), binding_mode_b.key(), normalize=False
+            ),
+            binding_mode_a,
+            binding_mode_b,
+            train_posbias=True,
+            normalize=False,
+            bias_mode="reverse",
         )
         initialize_cooperativity(self.binding_cooperativity)
         self.binding_cooperativity.check_length_consistency()

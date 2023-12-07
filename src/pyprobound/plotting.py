@@ -7,11 +7,10 @@ from typing import Any, cast
 
 import logomaker
 import matplotlib
-import matplotlib.axes
 import matplotlib.collections
-import matplotlib.figure
 import matplotlib.font_manager
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import scipy
 import torch
@@ -85,25 +84,15 @@ def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
         )
 
 
-def save_image(filename: str) -> None:
-    """Saves an image to a matplotlib plot to a file."""
-    plt.savefig(filename, bbox_inches="tight")
-    plt.close()
-
-
 def logo(
-    psam: PSAM,
-    reverse: bool = False,
-    fix_gauge: bool = True,
-    save: str | None = None,
-) -> None:
+    psam: PSAM, reverse: bool = False, fix_gauge: bool = True
+) -> matplotlib.figure.Figure:
     """Plots a sequence logo for the given PSAM using Logomaker.
 
     Args:
         psam: A PSAM to plot into a logo.
         reverse: Whether to plot the reverse complement.
         fix_gauge: Whether to call fix_gauge() before plotting the logo.
-        save: The basename to write the plot to, if provided.
     """
     if psam.out_channels // psam.n_strands != 1:
         raise ValueError("Cannot plot logo for multi-channel PSAMs")
@@ -247,150 +236,148 @@ def logo(
         plt.title(title)
 
     # Output
-    plt.tight_layout()
-    if isinstance(save, str):
-        name = "".join(i for i in psam.name if i.isalnum())
-        save_image(save + f"logo_{name}{'_rev' if reverse else ''}.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
+    return fig
 
 
-def posbias(conv1d: Conv0d | Conv1d, save: str | None = None) -> None:
+def posbias(conv1d: Conv0d | Conv1d) -> matplotlib.figure.Figure:
     r"""Plots the position bias profile :math:`\omega(x)`.
 
     Args:
         conv1d: A component containing a position bias profile.
-        save: The basename to write the plot to, if provided.
     """
-    for i_out, out in enumerate(
-        conv1d.get_log_posbias().detach().float().cpu().unbind(1)
-    ):
-        if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
-            out = out[conv1d.min_input_length :]
-        out = torch.exp(out)
-        rows = int(10 * (out.shape[0] / sum(out.shape)))
-        rows = min(8, max(2, rows))
-        columns = 10 - rows
-        if rows < columns:
-            fig, axs = plt.subplots(
-                nrows=2,
-                figsize=(columns, rows),
-                constrained_layout=True,
-                gridspec_kw={"height_ratios": [1000, 1]},
+    # Get position bias for each output channel
+    out_list = conv1d.get_log_posbias().detach().float().cpu().unbind(1)
+    if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
+        out_list = [out[conv1d.min_input_length :] for out in out_list]
+
+    # Create colornorm
+    max_val = max(max(np.nanmax(out.abs()) for out in out_list), 1e-7)
+    norm = matplotlib.colors.LogNorm(
+        vmin=np.exp(-max_val), vmax=np.exp(max_val)
+    )
+
+    # Create figure
+    rows = sum(len(out) for out in out_list)
+    columns = len(out_list[0][0])
+    figsize = (min(max(columns, 2), 10), min(max(rows, 2), 10))
+    if figsize[1] > 2 * figsize[0]:
+        figsize = (figsize[0], 2 * figsize[0])
+    fig, axs = plt.subplots(
+        nrows=len(out_list),
+        figsize=figsize,
+        sharex=True,
+        constrained_layout=True,
+    )
+    if len(out_list) == 1:
+        axs = np.array([axs])
+
+    # Add each output channel to figure
+    for i_out, out in enumerate(out_list):
+        axs[i_out].imshow(
+            torch.exp(out),
+            interpolation="none",
+            cmap=cmap,
+            norm=norm,
+            aspect="auto",
+        )
+        if len(out_list) > 1:
+            axs[i_out].set_title(f"Out channel {i_out}")
+
+        # Add tick labels
+        if columns > 1:
+            axs[i_out].xaxis.set_major_locator(
+                matplotlib.ticker.MaxNLocator(integer=True)
             )
         else:
-            fig, axs = plt.subplots(
-                ncols=2,
-                figsize=(rows, columns),
-                constrained_layout=True,
-                gridspec_kw={"width_ratios": [1000, 1]},
-            )
-        axs[1].axis("off")
-        max_val = max(np.nanmax(out.log().abs()), 1e-7)
-        norm = matplotlib.colors.LogNorm(
-            vmin=np.exp(-max_val), vmax=np.exp(max_val)
-        )
-        axs[0].imshow(
-            out, interpolation="none", cmap=cmap, norm=norm, aspect="auto"
-        )
-        axs[0].set_xlabel("Position on probe")
-        axs[0].set_ylabel("Length")
-        axs[0].set_title(f"{conv1d.layer_spec.name} posbias (O={i_out})")
-
-        # Add labels
-        axs[0].xaxis.set_major_locator(
+            axs[i_out].set_xticks([])
+        axs[i_out].yaxis.set_major_locator(
             matplotlib.ticker.MaxNLocator(integer=True)
         )
-        axs[0].yaxis.set_major_locator(
-            matplotlib.ticker.MaxNLocator(integer=True)
-        )
-        positions = axs[0].get_xticks()
+        positions = axs[i_out].get_yticks()
         step = int(positions[-1] - positions[-2])
         if step > 0 and (
             isinstance(conv1d, Conv0d) or conv1d.length_specific_bias
         ):
+            axs[i_out].set_ylabel("Probe length")
             positions = range(
                 0, conv1d.max_input_length - conv1d.min_input_length + 1, step
             )
             labels = [conv1d.min_input_length + i for i in positions]
-            axs[0].set_yticks(positions, labels)
-
-        # Draw colorbar
-        colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        fig.colorbar(
-            colorbar,
-            ax=axs,
-            fraction=1,
-            pad=0,
-            location="bottom" if rows < columns else "right",
-        )
-
-        # Output
-        if isinstance(save, str):
-            save_image(save + f"{conv1d}_O{i_out}_posbias.png")
+            axs[i_out].set_yticks(positions, labels)
         else:
-            plt.show()  # type: ignore[no-untyped-call]
+            axs[i_out].set_yticks([])
+
+    # Figure-level labels
+    if columns > 1:
+        axs[-1].set_xlabel("Position on probe")
+    fig.suptitle(f"{conv1d.layer_spec.name} posbias")
+
+    # Draw colorbar
+    colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    fig.colorbar(
+        colorbar,
+        ax=axs.ravel().tolist(),
+        fraction=1,
+        location="bottom" if rows < columns else "right",
+    )
+
+    # Output
+    return fig
 
 
 def cooperativity(
-    spacing_matrix: Spacing | Cooperativity, save: str | None = None
-) -> None:
+    spacing_matrix: Spacing | Cooperativity, len_a: int = -1, len_b: int = -1
+) -> matplotlib.figure.Figure:
     r"""Plots the cooperativity position bias :math:`\omega_{a:b}(x^a, x^b)`.
 
     Args:
         spacing_matrix: A component containing the cooperativity position bias.
-        save: The basename to write the plot to, if provided.
+        len_a: The input length for mode `a`, if length-specific position bias.
+        len_b: The input length for mode `b`, if length-specific position bias.
     """
-    fig = plt.figure(figsize=(6.4, 4.8), constrained_layout=True)
-    subfigs = fig.subfigures(1, 2, width_ratios=[1, 0.1])
-    axs = subfigs[0].subplots(
+    fig = plt.figure(figsize=(6, 5), constrained_layout=True)
+    axs = fig.subplots(
         spacing_matrix.n_strands,
         spacing_matrix.n_strands,
         sharex=True,
         sharey=True,
-        gridspec_kw={"right": 0.15},
     )
+    if spacing_matrix.n_strands == 1:
+        axs = np.array([[axs]])
+    axs = cast(npt.NDArray[Any], axs)
 
     # Get spacing matrix and axis labels
     if isinstance(spacing_matrix, Spacing):
         out = torch.exp(
-            spacing_matrix.get_log_spacing(
+            spacing_matrix.get_log_spacing_matrix(
                 spacing_matrix.max_num_windows, spacing_matrix.max_num_windows
             )
             .detach()
             .float()
             .cpu()
         )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
-            "-".join([i.name for i in spacing_matrix.mode_key_a])
-        )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
-            "-".join([i.name for i in spacing_matrix.mode_key_b])
-        )
+        fig.supylabel("-".join([i.name for i in spacing_matrix.mode_key_a]))
+        fig.supxlabel("-".join([i.name for i in spacing_matrix.mode_key_b]))
     else:
-        out = torch.exp(
-            spacing_matrix.get_log_spacing().detach().cpu()
-        ).squeeze()
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supxlabel(
-            spacing_matrix.mode_a.name
-        )
-        cast(matplotlib.figure.SubFigure, subfigs[0]).supylabel(
-            spacing_matrix.mode_b.name
-        )
+        out = torch.exp(spacing_matrix.get_log_spacing_matrix().detach().cpu())
+        out = out[len_a, len_b, :, :, :, :]
+        fig.supylabel(spacing_matrix.mode_a.name)
+        fig.supxlabel(spacing_matrix.mode_b.name)
 
     # Draw subplots
     max_val = max(np.nanmax(out.log().nan_to_num(0, 0, 0).abs()), 1e-7)
     norm = matplotlib.colors.LogNorm(
         vmin=np.exp(-max_val), vmax=np.exp(max_val)
     )
-    for n_strand_0, strand_0 in enumerate(
-        torch.chunk(out, spacing_matrix.n_strands, dim=0)
-    ):
-        for n_strand_1, strand_1 in enumerate(
-            torch.chunk(strand_0, spacing_matrix.n_strands, dim=1)
-        ):
-            ax = cast(matplotlib.axes.Axes, axs[n_strand_0, n_strand_1])
-            ax.imshow(strand_1, interpolation="none", cmap=cmap, norm=norm)
+    for axs_0, strand_0 in zip(axs, out):
+        for ax, strand_1 in zip(axs_0, strand_0):
+            ax.imshow(
+                strand_1,
+                interpolation="none",
+                cmap=cmap,
+                norm=norm,
+                aspect="equal",
+            )
             ax.xaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(integer=True)
             )
@@ -399,30 +386,21 @@ def cooperativity(
             )
 
     # Label title and axes
-    cast(matplotlib.figure.SubFigure, subfigs[0]).suptitle(
-        f"{spacing_matrix.name} Spacing"
-    )
+    fig.suptitle(f"{spacing_matrix.name} Spacing")
     if spacing_matrix.n_strands == 2:
-        cast(matplotlib.axes.Axes, axs[0, 0]).set_ylabel("Forward")
-        cast(matplotlib.axes.Axes, axs[1, 0]).set_ylabel("Reverse")
-        cast(matplotlib.axes.Axes, axs[1, 0]).set_xlabel("Forward")
-        cast(matplotlib.axes.Axes, axs[1, 1]).set_xlabel("Reverse")
+        axs[0, 0].set_ylabel("Forward")
+        axs[1, 0].set_ylabel("Reverse")
+        axs[1, 0].set_xlabel("Forward")
+        axs[1, 1].set_xlabel("Reverse")
 
     # Draw colorbar
-    bar_axs = subfigs[1].add_axes(
-        [0, 0.143, 1, 0.795]  # left, bottom , width, height
-    )
-    bar_axs.axis("off")
-    colorbar = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-    cast(matplotlib.figure.SubFigure, subfigs[1]).colorbar(
-        colorbar, ax=bar_axs, fraction=1, pad=0
+    colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    fig.colorbar(
+        colorbar, ax=axs.ravel().tolist(), fraction=1, location="right"
     )
 
     # Output
-    if isinstance(save, str):
-        save_image(save + f"{spacing_matrix}_spacing.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
+    return fig
 
 
 def _enrichment(
@@ -556,8 +534,7 @@ def probe_enrichment(
     columns: list[int] | None = None,
     kernel: int = 500,
     max_split: int | None = None,
-    save: str | None = None,
-) -> None:
+) -> matplotlib.figure.Figure:
     """Plots the enrichment of sequences, binned by predicted enrichment.
 
     Args:
@@ -566,7 +543,6 @@ def probe_enrichment(
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of enrichment-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
-        save: The basename to write the plot to, if provided.
     """
 
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
@@ -574,22 +550,13 @@ def probe_enrichment(
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
 
-    # Make plot
-    _enrichment(
+    return _enrichment(
         counts_obs,
         counts_pred,
         columns=columns,
         kernel=kernel,
         title=f"{experiment.name} Probe-Level Enr.",
     )
-
-    # Output
-    if isinstance(save, str):
-        name = "".join(i for i in experiment.name if i.isalnum())
-        cols = "-".join(map(str, columns))
-        save_image(save + f"probeenr_{name}_cols{cols}_kernel{kernel}.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
 
 
 def kmer_enrichment(
@@ -599,8 +566,7 @@ def kmer_enrichment(
     kmer_length: int = 3,
     kernel: int = 500,
     max_split: int | None = None,
-    save: str | None = None,
-) -> None:
+) -> matplotlib.figure.Figure:
     """Plots the enrichment of k-mers, binned by predicted enrichment.
 
     Args:
@@ -609,7 +575,6 @@ def kmer_enrichment(
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of enrichment-sorted k-mers.
         max_split: Maximum number of sequences scored at a time.
-        save: The basename to write the plot to, if provided.
     """
 
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
@@ -620,24 +585,13 @@ def kmer_enrichment(
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
 
-    # Make plot
-    _enrichment(
+    return _enrichment(
         counts_obs,
         counts_pred,
         columns=columns,
         kernel=kernel,
         title=f"{experiment.name} {kmer_length}-mer Enr.",
     )
-
-    # Output
-    if isinstance(save, str):
-        name = "".join(i for i in experiment.name if i.isalnum())
-        cols = "-".join(map(str, columns))
-        save_image(
-            save + f"{kmer_length}merenr_{name}_cols{cols}_kernel{kernel}.png"
-        )
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
 
 
 def kd_consistency(
@@ -648,8 +602,7 @@ def kd_consistency(
     batch: CountBatch,
     kernel: int = 500,
     max_split: int | None = None,
-    save: str | None = None,
-) -> None:
+) -> matplotlib.figure.Figure:
     """Plots the bound and unbound fractions, binned by predicted Kd.
 
     Args:
@@ -660,7 +613,6 @@ def kd_consistency(
         batch: A batch corresponding to the provided experiment.
         kernel: The bin for average pooling of Kd-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
-        save: The basename to write the plot to, if provided.
     """
 
     # Get Kd's
@@ -739,12 +691,7 @@ def kd_consistency(
     fig.suptitle(title)
 
     # Output
-    if isinstance(save, str):
-        name = "".join(i for i in experiment.name if i.isalnum())
-        columns = "-".join(str(i) for i in (i_index, b_index, u_index))
-        save_image(save + f"kd_consistency_{name}_col{columns}.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
+    return fig
 
 
 def keff_consistency(
@@ -753,8 +700,7 @@ def keff_consistency(
     columns: list[int] | None = None,
     kernel: int = 500,
     max_split: int | None = None,
-    save: str | None = None,
-) -> None:
+) -> matplotlib.figure.Figure:
     """Plots the modified fraction, binned by predicted Kd.
 
     Args:
@@ -763,7 +709,6 @@ def keff_consistency(
         columns: The column indices to keep for plotting.
         kernel: The bin for average pooling of Kd-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
-        save: The basename to write the plot to, if provided.
     """
     if columns is None:
         columns = [
@@ -772,7 +717,7 @@ def keff_consistency(
             if isinstance(rnd, ExponentialRound)
         ]
 
-    _, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
+    fig, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
 
     # Get counts of all rounds
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
@@ -848,12 +793,7 @@ def keff_consistency(
     axs.set_title(title)
 
     # Output
-    if isinstance(save, str):
-        name = "".join(i for i in experiment.name if i.isalnum())
-        cols = "-".join(map(str, columns))
-        save_image(save + f"kd_consistency_{name}_cols{cols}.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
+    return fig
 
 
 def contribution(
@@ -861,8 +801,7 @@ def contribution(
     batch: CountBatch,
     kernel: int = 500,
     max_split: int | None = None,
-    save: str | None = None,
-) -> None:
+) -> matplotlib.figure.Figure:
     """Plots the predicted relative contribution of every Binding component.
 
     Args:
@@ -870,7 +809,6 @@ def contribution(
         batch: A batch corresponding to the provided experiment.
         kernel: The bin for average pooling of Kd-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
-        save: The basename to write the plot to, if provided.
     """
 
     _, log_aggregate = score(
@@ -942,8 +880,4 @@ def contribution(
     fig.align_ylabels(axs)
 
     # Output
-    if isinstance(save, str):
-        name = "".join(i for i in rnd.name if i.isalnum())
-        save_image(save + f"contribution_{name}_kernel{kernel}.png")
-    else:
-        plt.show()  # type: ignore[no-untyped-call]
+    return fig
