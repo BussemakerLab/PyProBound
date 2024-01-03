@@ -138,7 +138,8 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
                 mod.train_hill = train_hill
                 mod.train_posbias = False
                 if update_construct:
-                    mod.log_posbias.zero_()
+                    for diag in mod.log_posbias:
+                        diag.zero_()
 
         self.round.check_length_consistency()
 
@@ -449,7 +450,7 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
                         if getattr(layer, "train_posbias", False):
                             layer.log_posbias.requires_grad_()
                 elif isinstance(mod, Cooperativity):
-                    if self.train_posbias:
+                    if mod.train_posbias:
                         mod.log_posbias.requires_grad_()
 
             self.optimizer.train_simultaneous()

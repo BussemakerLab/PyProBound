@@ -80,7 +80,7 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
                 str_idx = self._get_abs_string_index(idx)
                 if not isinstance(val, torch.nn.Module):
                     raise TypeError(
-                        "Expected a Module for Modulelist"
+                        "Expected a Module for TModulelist"
                         f" but received {type(val).__name__} instead"
                     )
                 setattr(self, str_idx, val)
@@ -88,7 +88,7 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
             str_idx = self._get_abs_string_index(index)
             if not isinstance(value, torch.nn.Module):
                 raise TypeError(
-                    "Expected a Module for ModuleList"
+                    "Expected a Module for TModuleList"
                     f" but received {type(value).__name__} instead"
                 )
             setattr(self, str_idx, value)
@@ -189,7 +189,7 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
                 val = Parameter(val) if not isinstance(val, Parameter) else val
                 if not isinstance(val, Tensor):
                     raise TypeError(
-                        "Expected a Tensor for ParameterList"
+                        "Expected a Tensor for TParameterList"
                         f" but received {type(val).__name__} instead"
                     )
                 setattr(self, str_idx, val)
@@ -201,7 +201,7 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
                 param = value
             if not isinstance(value, Tensor):
                 raise TypeError(
-                    "Expected a Tensor for ParameterList"
+                    "Expected a Tensor for TParameterList"
                     f" but received {type(value).__name__} instead"
                 )
             setattr(self, str_idx, param)
@@ -273,7 +273,7 @@ class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
     def _key_to_attr(self, key: str) -> str:
         if not isinstance(key, str):
             raise TypeError(
-                "Index given to ParameterDict cannot be used as key"
+                "Index given to TParameterDict cannot be used as key"
                 f" as it is not a string (type is '{type(key).__name__}')."
             )
         return key
@@ -291,7 +291,7 @@ class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
         self._keys.add(attr)
         if not isinstance(__value, torch.nn.Parameter):
             raise TypeError(
-                "Expected a parameter for ParameterDict"
+                "Expected a parameter for TParameterDict"
                 f" but received {type(__value).__name__} instead"
             )
         setattr(self, attr, __value)

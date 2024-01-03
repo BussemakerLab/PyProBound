@@ -264,10 +264,6 @@ class Component(torch.nn.Module, abc.ABC):
         """
         checkpoint_state: dict[str, Any] = torch.load(checkpoint)
         checkpoint_state_dict: dict[str, Any] = checkpoint_state["state_dict"]
-        d = {}
-        for key, val in checkpoint_state_dict.items():
-            d[key.replace("flat_log_spacing", "log_spacing")] = val
-        checkpoint_state_dict.update(d)
         self.reload_from_state_dict(checkpoint_state_dict)
         return cast(dict[str, Any], checkpoint_state["metadata"])
 

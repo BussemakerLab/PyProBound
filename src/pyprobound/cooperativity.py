@@ -4,6 +4,7 @@ Members are explicitly re-exported in pyprobound.
 """
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable, Iterator
 from typing import Literal, cast
 
@@ -14,6 +15,7 @@ from typing_extensions import Self, override
 
 from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
+from .containers import TParameterList
 from .layers import LayerSpec, ModeKey
 from .mode import Mode
 from .utils import ceil_div
@@ -169,7 +171,7 @@ class Spacing(Spec):
     def _update_propagation(self) -> None:
         """Updates the number of windows, called by parent Cooperativity."""
         new_max_num_windows = max(
-            max(coop.out_shape_a, coop.out_shape_b)
+            max(coop.n_windows_a, coop.n_windows_b)
             for coop in self._cooperativities
         )
         if new_max_num_windows < 1:
@@ -201,10 +203,7 @@ class Spacing(Spec):
                 f" {size_a} and {size_b}; expected int for both"
             )
 
-        # Normalize log_spacing
         log_spacing: Tensor = self.log_spacing
-        if self.normalize:
-            log_spacing = log_spacing - log_spacing.mean()
 
         # Adjust for max_overlap and max_spacing
         # overlap(offset) = min(
@@ -251,6 +250,14 @@ class Spacing(Spec):
             self.n_strands,
             n_windows_a + n_windows_b - 1,
         )
+
+        if self.normalize:
+            log_spacing = (
+                log_spacing
+                - log_spacing.nan_to_num(
+                    posinf=float("nan"), neginf=float("nan")
+                ).nanmean()
+            )
 
         return log_spacing
 
@@ -308,8 +315,8 @@ class Cooperativity(Binding):
         mode_b (Mode): The second binding mode contributing to the
             dimer.
         log_hill (Tensor): The Hill coeffient in log space.
-        log_posbias (Tensor): The bias :math:`\omega_{a:b}(x^a, x^b)` for each
-            output position and strand.
+        log_posbias (list[Tensor]): The bias :math:`\omega_{a:b}(x^a_m, x^b_n)`
+            at each relative offset :math:`n-m` for each strand.
     """
 
     unfreezable = Literal[Binding.unfreezable, "hill", "posbias"]
@@ -367,8 +374,8 @@ class Cooperativity(Binding):
         self.mode_b = mode_b
         self.mode_a._cooperativities.add(self)
         self.mode_b._cooperativities.add(self)
-        self.out_shape_a: int = self.mode_a.out_len(self.mode_a.input_shape)
-        self.out_shape_b: int = self.mode_b.out_len(self.mode_b.input_shape)
+        self.n_windows_a: int = self.mode_a.out_len(self.mode_a.input_shape)
+        self.n_windows_b: int = self.mode_b.out_len(self.mode_b.input_shape)
         self._bias_mode = bias_mode
         self._bias_bin = bias_bin
         self._length_specific_bias = length_specific_bias
@@ -379,7 +386,6 @@ class Cooperativity(Binding):
         self.spacing._update_propagation()
 
         # Create posbias
-        n_windows_a = self.mode_a.out_len(self.mode_a.input_shape)
         lengths_a = (
             (
                 self.mode_a.out_len(self.mode_a.max_input_length, "max")
@@ -389,7 +395,6 @@ class Cooperativity(Binding):
             if self.length_specific_bias
             else 1
         )
-        n_windows_b = self.mode_b.out_len(self.mode_b.input_shape)
         lengths_b = (
             (
                 self.mode_b.out_len(self.mode_b.max_input_length, "max")
@@ -400,20 +405,24 @@ class Cooperativity(Binding):
             else 1
         )
         self.train_posbias = train_posbias
-        self.log_posbias = torch.nn.Parameter(
-            torch.zeros(
-                size=(
+        self.log_posbias = TParameterList(
+            [
+                torch.zeros(
                     lengths_a,
                     lengths_b,
                     self.spacing.n_strands,
                     (self.spacing.n_strands if bias_mode == "strand" else 1),
-                    self._num_windows(n_windows_a),
-                    self._num_windows(n_windows_b),
-                ),
-                dtype=__precision__,
-            ),
-            requires_grad=train_posbias,
+                    self._num_windows(
+                        min(i, self.n_windows_a, self.n_windows_b)
+                    ),
+                )
+                for i in itertools.chain(
+                    range(1, self.n_windows_a + 1),
+                    range(self.n_windows_b - 1, 0, -1),
+                )
+            ]
         )
+        self.log_posbias.requires_grad_(train_posbias)
 
     @property
     def n_strands(self) -> Literal[1, 2]:
@@ -481,16 +490,33 @@ class Cooperativity(Binding):
         self.mode_a._cooperativities.discard(alt_coop)
         # pylint: disable-next=protected-access
         self.mode_b._cooperativities.discard(alt_coop)
-        if self.log_posbias.shape != alt_coop.log_posbias.shape:
+        if alt_coop.spacing.max_num_windows < self.spacing.max_num_windows:
             raise RuntimeError(
-                f"expected posbias shape {alt_coop.log_posbias.shape}"
-                f", found {self.log_posbias.shape}"
+                f"Expected max_num_windows {alt_coop.spacing.max_num_windows}"
+                f", found {self.spacing.max_num_windows}"
             )
         if alt_coop.spacing.max_num_windows < self.spacing.max_num_windows:
             raise RuntimeError(
                 f"Expected max_num_windows {alt_coop.spacing.max_num_windows}"
                 f", found {self.spacing.max_num_windows}"
             )
+        if (
+            alt_coop.n_windows_a != self.n_windows_a
+            or alt_coop.n_windows_b != self.n_windows_b
+        ):
+            raise RuntimeError(
+                "Expected number of windows per mode",
+                f" {(alt_coop.n_windows_a, alt_coop.n_windows_b)}",
+                f", found {(self.n_windows_a, self.n_windows_b)}",
+            )
+        for i, (log_posbias, alt_log_posbias) in enumerate(
+            zip(self.log_posbias, alt_coop.log_posbias)
+        ):
+            if log_posbias.shape != alt_log_posbias.shape:
+                raise RuntimeError(
+                    f"expected posbias shape {alt_log_posbias.shape}"
+                    f" for index {i}, found {log_posbias.shape}"
+                )
 
     @override
     def unfreeze(self, parameter: unfreezable = "all") -> None:
@@ -580,6 +606,96 @@ class Cooperativity(Binding):
             min_len_shift: The change in the number of short input lengths.
             max_len_shift: The change in the number of long input lengths.
         """
+
+        def update(
+            old_lengths: list[int],
+            direction: Literal["left_a", "left_b", "right_a", "right_b"],
+            sign: Literal[-1, 1],
+        ) -> list[int]:
+            # Update number of diagonals
+            if direction in ("left_a", "right_b"):  # append
+                if sign > 0:
+                    self.log_posbias.append(
+                        torch.nn.Parameter(
+                            torch.zeros(
+                                self.log_posbias[0].shape[:-1] + (0,),
+                                dtype=__precision__,
+                            ),
+                            requires_grad=self.train_posbias,
+                        )
+                    )
+                    old_lengths = old_lengths + [0]
+                else:
+                    self.log_posbias = self.log_posbias[:-1]
+                    old_lengths = old_lengths[:-1]
+            else:  # prepend
+                if sign > 0:
+                    self.log_posbias.insert(
+                        0,
+                        torch.nn.Parameter(
+                            torch.zeros(
+                                self.log_posbias[0].shape[:-1] + (0,),
+                                dtype=__precision__,
+                            ),
+                            requires_grad=self.train_posbias,
+                        ),
+                    )
+                    old_lengths = [0] + old_lengths
+                else:
+                    self.log_posbias = self.log_posbias[1:]
+                    old_lengths = old_lengths[1:]
+
+            if direction in ("left_a", "right_a"):
+                self.n_windows_a += sign
+            else:
+                self.n_windows_b += sign
+
+            # Update diagonal lengths
+            for diag_idx, diag in enumerate(self.log_posbias):
+                prepend = 0
+                append = 0
+                shift = self._num_windows(
+                    old_lengths[diag_idx] + sign
+                ) - self._num_windows(old_lengths[diag_idx])
+                increment = False
+
+                if direction == "left_a" and (
+                    (sign > 0 and diag_idx >= self.n_windows_a - 1)
+                    or (sign < 0 and diag_idx >= self.n_windows_a)
+                ):
+                    prepend = shift
+                    increment = True
+                elif direction == "left_b" and (
+                    (sign > 0 and diag_idx < self.n_windows_a)
+                    or (sign < 0 and diag_idx < self.n_windows_a - 1)
+                ):
+                    prepend = shift
+                    increment = True
+                elif direction == "right_a" and (
+                    (sign > 0 and diag_idx < self.n_windows_b)
+                    or (sign < 0 and diag_idx < self.n_windows_b - 1)
+                ):
+                    append = shift
+                    increment = True
+                elif direction == "right_b" and (
+                    (sign > 0 and diag_idx >= self.n_windows_b - 1)
+                    or (sign < 0 and diag_idx >= self.n_windows_b)
+                ):
+                    append = shift
+                    increment = True
+                self.log_posbias[diag_idx] = torch.nn.Parameter(
+                    F.pad(diag, (prepend, append)),
+                    requires_grad=diag.requires_grad,
+                )
+                if increment:
+                    old_lengths[diag_idx] = min(
+                        old_lengths[diag_idx] + sign,
+                        self.n_windows_a,
+                        self.n_windows_b,
+                    )
+
+            return old_lengths
+
         for bmd_idx in [
             i for i, bmd in enumerate(self.components()) if bmd is binding_mode
         ]:
@@ -593,32 +709,46 @@ class Cooperativity(Binding):
             back_b = max_len_shift if bmd_idx == 1 else 0
             if not self.length_specific_bias:
                 front_a, front_b, back_a, back_b = 0, 0, 0, 0
-            self.log_posbias = torch.nn.Parameter(
-                F.pad(
-                    self.log_posbias,
-                    (
-                        self._num_windows(self.out_shape_b + left_b)
-                        - self._num_windows(self.out_shape_b),
-                        self._num_windows(self.out_shape_b + left_b + right_b)
-                        - self._num_windows(self.out_shape_b + left_b),
-                        self._num_windows(self.out_shape_a + left_a)
-                        - self._num_windows(self.out_shape_a),
-                        self._num_windows(self.out_shape_a + left_a + right_a)
-                        - self._num_windows(self.out_shape_a + left_a),
-                        0,
-                        0,
-                        0,
-                        0,
-                        front_b,
-                        back_b,
-                        front_a,
-                        back_a,
+
+            # Run updates
+            old_lengths = [
+                min(i, self.n_windows_a, self.n_windows_b)
+                for i in itertools.chain(
+                    range(1, self.n_windows_a + 1),
+                    range(self.n_windows_b - 1, 0, -1),
+                )
+            ]
+            if left_a != 0:
+                for _ in range(abs(left_a)):
+                    old_lengths = update(
+                        old_lengths, "left_a", 1 if left_a > 0 else -1
+                    )
+            if left_b != 0:
+                for _ in range(abs(left_b)):
+                    old_lengths = update(
+                        old_lengths, "left_b", 1 if left_b > 0 else -1
+                    )
+            if right_a != 0:
+                for _ in range(abs(right_a)):
+                    old_lengths = update(
+                        old_lengths, "right_a", 1 if right_a > 0 else -1
+                    )
+            if right_b != 0:
+                for _ in range(abs(right_b)):
+                    old_lengths = update(
+                        old_lengths, "right_b", 1 if right_b > 0 else -1
+                    )
+
+            # Update input lengths
+            for diag_idx, diagonal in enumerate(self.log_posbias):
+                self.log_posbias[diag_idx] = torch.nn.Parameter(
+                    F.pad(
+                        diagonal,
+                        (0, 0, 0, 0, 0, 0, front_b, back_b, front_a, back_a),
                     ),
-                ),
-                requires_grad=self.log_posbias.requires_grad,
-            )
-            self.out_shape_a = self.mode_a.out_len(self.mode_a.input_shape)
-            self.out_shape_b = self.mode_b.out_len(self.mode_b.input_shape)
+                    requires_grad=diagonal.requires_grad,
+                )
+
             # pylint: disable-next=protected-access
             self.spacing._update_propagation()
 
@@ -632,9 +762,68 @@ class Cooperativity(Binding):
             \text{out_length}_a+\text{out_length}_b-1)`.
         """
         return self.spacing.get_log_spacing(
-            n_windows_a=self.mode_a.out_len(self.mode_a.input_shape),
-            n_windows_b=self.mode_b.out_len(self.mode_b.input_shape),
+            n_windows_a=self.n_windows_a, n_windows_b=self.n_windows_b
         )
+
+    def get_log_spacing_diagonals(self) -> list[Tensor]:
+        r"""The cooperativity position bias :math:`\omega_{a:b}(x^a, x^b)`.
+
+        Returns:
+            A list of tensors with the bias of each pair of windows
+            :math:`(x^a_m, x^b_n)` at each relative offset :math:`n-m`, each of
+            shape :math:`(\text{input_lengths}_a,\text{input_lengths}_b,
+            \text{n_strands}_a,\text{n_strands}_b,\text{diagonal_length})`.)`.
+        """
+
+        # Normalize posbias
+        log_posbias: list[Tensor] = list(self.log_posbias)
+        if self.normalize:
+            for i, diagonal in enumerate(log_posbias):
+                log_posbias[i] = diagonal - diagonal.mean(dim=-1, keepdim=True)
+
+        # Pad posbias to the right shape
+        if self.bias_bin > 1:
+            for i, length in enumerate(
+                itertools.chain(
+                    range(1, self.n_windows_a + 1),
+                    range(self.n_windows_b - 1, 0, -1),
+                )
+            ):
+                log_posbias[i] = log_posbias[i].repeat_interleave(
+                    self.bias_bin, -1
+                )[..., : min(length, self.n_windows_a, self.n_windows_b)]
+
+        # Adjust for the opposite strand
+        if self.bias_mode != "strand":
+            flip = [-3]
+            if self.bias_mode == "reverse":
+                flip.extend([-2, -1])
+            for i, diagonal in enumerate(log_posbias):
+                diagonal = diagonal[..., :1, :]
+                log_posbias[i] = torch.cat(
+                    (diagonal, diagonal.flip(flip)), dim=-2
+                )
+
+        # Add spacing value and return
+        log_spacing = self.get_log_spacing()
+        if self.n_strands > 1:
+            log_spacing = torch.stack(
+                [log_spacing, log_spacing.flip(-1, -2)], -2
+            )
+        log_spacing_diagonals = [
+            l_s.unsqueeze(-1) + diagonal
+            for l_s, diagonal in zip(log_spacing.unbind(-1), log_posbias)
+        ]
+
+        # Return spacing + posbias padded for length indexing
+        if self.length_specific_bias:
+            min_a = self.mode_a.out_len(self.mode_a.min_input_length, "min")
+            min_b = self.mode_b.out_len(self.mode_b.min_input_length, "min")
+            for i, diag in enumerate(log_spacing_diagonals):
+                log_spacing_diagonals[i] = F.pad(
+                    diag, (0, 0, 0, 0, 0, 0, min_b, 0, min_a, 0)
+                )
+        return log_spacing_diagonals
 
     def get_log_spacing_matrix(self) -> Tensor:
         r"""The cooperativity position bias :math:`\omega_{a:b}(x^a, x^b)`.
@@ -646,56 +835,33 @@ class Cooperativity(Binding):
             \text{n_strands}_a,\text{n_strands}_b,
             \text{out_length}_a,\text{out_length}_b)`.)`.
         """
-        n_windows_a = self.mode_a.out_len(self.mode_a.input_shape)
-        n_windows_b = self.mode_b.out_len(self.mode_b.input_shape)
-
-        # Create diagonal-constant matrix for each strand
-        log_spacing = self.spacing.get_log_spacing_matrix(
-            n_windows_a=n_windows_a, n_windows_b=n_windows_b
-        )
-
-        if not self.log_posbias.requires_grad and not torch.any(
-            self.log_posbias != 0
+        if not any(
+            diag.requires_grad or torch.any(diag != 0)
+            for diag in self.log_posbias
         ):
-            return log_spacing.unsqueeze(0).unsqueeze(0)
-
-        # Normalize posbias
-        log_posbias: Tensor = self.log_posbias
-        if self.normalize:
-            log_posbias = log_posbias - log_posbias.mean(
-                dim=(-1, -2, -3, -4), keepdim=True
+            return (
+                self.spacing.get_log_spacing_matrix(
+                    n_windows_a=self.n_windows_a, n_windows_b=self.n_windows_b
+                )
+                .unsqueeze(0)
+                .unsqueeze(0)
             )
 
-        # Pad posbias to the right shape
-        if self.bias_bin > 1:
-            log_posbias = log_posbias.repeat_interleave(
-                self.bias_bin, -2
-            ).repeat_interleave(self.bias_bin, -1)[
-                ..., :n_windows_a, :n_windows_b
-            ]
-        if self.bias_mode != "strand":
-            log_posbias = log_posbias[..., :1, :, :]
-            flip = [2]
-            if self.bias_mode == "reverse":
-                flip.extend([-2, -1])
-            log_posbias = torch.cat(
-                (log_posbias, log_posbias.flip(flip)), dim=-3
-            )
-        assert log_spacing.shape == log_posbias.shape[2:]
+        log_spacing_diagonals = self.get_log_spacing_diagonals()
 
-        # Return spacing + posbias padded for length indexing
-        log_spacing_matrix = log_spacing + log_posbias
-        if self.length_specific_bias:
-            min_windows_a = self.mode_a.out_len(
-                self.mode_a.min_input_length, "min"
+        # Form into matrix
+        log_spacing_matrix = torch.zeros(
+            list(log_spacing_diagonals[0].shape[:-1])
+            + [self.n_windows_a, self.n_windows_b]
+        )
+        for diagonal, offset in zip(
+            log_spacing_diagonals,
+            range(-self.n_windows_a + 1, self.n_windows_b),
+        ):
+            log_spacing_matrix = log_spacing_matrix.diagonal_scatter(
+                diagonal, offset, -2, -1
             )
-            min_windows_b = self.mode_b.out_len(
-                self.mode_b.min_input_length, "min"
-            )
-            log_spacing_matrix = F.pad(
-                log_spacing_matrix,
-                (0, 0, 0, 0, 0, 0, 0, 0, min_windows_b, 0, min_windows_a, 0),
-            )
+
         return log_spacing_matrix
 
     @override
@@ -771,33 +937,32 @@ class Cooperativity(Binding):
 
         # Score each mode
         windows_a = self.mode_a.score_windows(seqs)
-        n_windows_a = windows_a.shape[-1]
         windows_b = self.mode_b.score_windows(seqs)
-        n_windows_b = windows_b.shape[-1]
 
         # Get spacing
-        posbias = self.log_posbias.requires_grad or torch.any(
-            self.log_posbias != 0
+        posbias = any(
+            diag.requires_grad or torch.any(diag != 0)
+            for diag in self.log_posbias
         )
         if posbias:
-            log_spacing_matrix = self.get_log_spacing_matrix()
-            if len(log_spacing_matrix) > 1:
+            log_spacing_diagonals = self.get_log_spacing_diagonals()
+            if len(log_spacing_diagonals[0]) > 1:
                 with torch.no_grad():
                     lengths_a = windows_a[:, 0].isfinite().sum(dim=-1)
                     lengths_b = windows_b[:, 0].isfinite().sum(dim=-1)
             else:
-                log_spacing_matrix = log_spacing_matrix.squeeze(0)
+                log_spacing_diagonals = [
+                    i.squeeze(0) for i in log_spacing_diagonals
+                ]
         else:
             log_spacing_vector = self.get_log_spacing()
 
         # Loop over relative offsets
-        for i in range(n_windows_a + n_windows_b - 1):
+        for i in range(self.n_windows_a + self.n_windows_b - 1):
             # Get relative offset
             if posbias:
-                log_spacing = torch.diagonal(
-                    log_spacing_matrix, i - n_windows_a + 1, -2, -1
-                )
-                if len(log_spacing_matrix) > 1:
+                log_spacing = log_spacing_diagonals[i]
+                if len(log_spacing) > 1:
                     log_spacing = log_spacing[lengths_a, lengths_b]
             else:
                 log_spacing = log_spacing_vector[..., i]
@@ -806,7 +971,7 @@ class Cooperativity(Binding):
 
             # Get slices of offsets
             left = -i - 1
-            right = n_windows_a + n_windows_b - 1 - i
+            right = self.n_windows_a + self.n_windows_b - 1 - i
             sl_0 = slice(left, right)
             sl_1 = slice(-right, -left)
 
