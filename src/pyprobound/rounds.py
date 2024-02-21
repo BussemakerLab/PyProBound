@@ -1,4 +1,5 @@
 """Selection layers corresponding to sequencing rounds / CountTable columns."""
+
 from __future__ import annotations
 
 import abc
@@ -73,8 +74,7 @@ class BaseRound(Transform, abc.ABC):
 
     @override
     @abc.abstractmethod
-    def components(self) -> Iterator[Aggregate]:
-        ...
+    def components(self) -> Iterator[Aggregate]: ...
 
     @override
     def unfreeze(self, parameter: unfreezable = "all") -> None:

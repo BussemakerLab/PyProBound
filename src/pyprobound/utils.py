@@ -8,23 +8,19 @@ from torch import Tensor
 
 
 @overload
-def ceil_div(dividend: int, divisor: int) -> int:
-    ...
+def ceil_div(dividend: int, divisor: int) -> int: ...
 
 
 @overload
-def ceil_div(dividend: Tensor, divisor: int) -> Tensor:
-    ...
+def ceil_div(dividend: Tensor, divisor: int) -> Tensor: ...
 
 
 @overload
-def ceil_div(dividend: int, divisor: Tensor) -> Tensor:
-    ...
+def ceil_div(dividend: int, divisor: Tensor) -> Tensor: ...
 
 
 @overload
-def ceil_div(dividend: Tensor, divisor: Tensor) -> Tensor:
-    ...
+def ceil_div(dividend: Tensor, divisor: Tensor) -> Tensor: ...
 
 
 def ceil_div(dividend: int | Tensor, divisor: int | Tensor) -> int | Tensor:
@@ -33,23 +29,19 @@ def ceil_div(dividend: int | Tensor, divisor: int | Tensor) -> int | Tensor:
 
 
 @overload
-def floor_div(dividend: int, divisor: int) -> int:
-    ...
+def floor_div(dividend: int, divisor: int) -> int: ...
 
 
 @overload
-def floor_div(dividend: Tensor, divisor: int) -> Tensor:
-    ...
+def floor_div(dividend: Tensor, divisor: int) -> Tensor: ...
 
 
 @overload
-def floor_div(dividend: int, divisor: Tensor) -> Tensor:
-    ...
+def floor_div(dividend: int, divisor: Tensor) -> Tensor: ...
 
 
 @overload
-def floor_div(dividend: Tensor, divisor: Tensor) -> Tensor:
-    ...
+def floor_div(dividend: Tensor, divisor: Tensor) -> Tensor: ...
 
 
 def floor_div(dividend: int | Tensor, divisor: int | Tensor) -> int | Tensor:

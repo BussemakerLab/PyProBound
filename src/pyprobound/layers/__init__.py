@@ -1,4 +1,5 @@
 """Implementation of binding mode layers."""
+
 # pylint: disable=undefined-variable
 
 __all__ = [

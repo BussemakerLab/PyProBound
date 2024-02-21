@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 import abc
 from collections.abc import Iterable, Iterator
 from typing import Generic, NamedTuple, TypeVar, cast
@@ -44,8 +45,7 @@ class LossModule(Component, Generic[T]):
 
     @override
     @abc.abstractmethod
-    def components(self) -> Iterator[Transform]:
-        ...
+    def components(self) -> Iterator[Transform]: ...
 
     @override
     @abc.abstractmethod
@@ -294,9 +294,11 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                 device = expt.rounds[0].log_depth.device
                 split_size = get_split_size(
                     self.max_embedding_size(),
-                    len(sample.seqs)
-                    if self.max_split is None
-                    else min(self.max_split, len(sample.seqs)),
+                    (
+                        len(sample.seqs)
+                        if self.max_split is None
+                        else min(self.max_split, len(sample.seqs))
+                    ),
                     device,
                 )
 
@@ -327,9 +329,11 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                 regularizations.append(self.regularization(expt))
 
         except ValueError as e:
-            raise ValueError(
-                "Length of experiments and batches may not match?"
-            ) from e
+            if str(e).startswith("zip"):
+                raise ValueError(
+                    "Length of experiments and batches may not match"
+                ) from e
+            raise e
 
         # Get scaling factors for each experiment
         weights = self.weights

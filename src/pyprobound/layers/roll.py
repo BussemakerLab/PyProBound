@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.layers.
 """
+
 from typing import Any, Literal, TypeVar, cast, overload
 
 import numpy as np
@@ -63,12 +64,10 @@ class RollSpec(LayerSpec):
         return super().out_len(length, mode)
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> None: ...
 
     @override
     def in_len(

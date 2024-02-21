@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.layers.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -48,12 +49,10 @@ class LengthManager(Protocol):
         return length
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> T | None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> T | None: ...
 
     def in_len(
         self, length: T, mode: Literal["min", "max"] = "max"
@@ -188,12 +187,10 @@ class Layer(Transform, LengthManager):
         return self.layer_spec.out_len(length=length, mode=mode)
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> T | None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> T | None: ...
 
     @override
     def in_len(
@@ -319,12 +316,10 @@ class ModeKey(tuple[LayerSpec], LengthManager):
         return length
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> T | None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> T | None: ...
 
     @override
     def in_len(

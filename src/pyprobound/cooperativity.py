@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -46,6 +47,8 @@ class Spacing(Spec):
         self,
         mode_key_a: ModeKey,
         mode_key_b: ModeKey,
+        score_same: bool = True,
+        score_reverse: bool = True,
         max_overlap: int | None = None,
         max_spacing: int | None = None,
         normalize: bool = False,
@@ -65,11 +68,6 @@ class Spacing(Spec):
         """
         super().__init__(name=name)
 
-        if max_overlap is not None and max_overlap < 0:
-            raise ValueError("max_overlap must be >= 0")
-        if max_spacing is not None and max_spacing < 0:
-            raise ValueError("max_overlap must be >= 0")
-
         self.mode_key_a = mode_key_a
         self.mode_key_b = mode_key_b
         self.log_spacing = torch.nn.Parameter(
@@ -79,12 +77,16 @@ class Spacing(Spec):
         self.max_spacing = max_spacing
         self.normalize = normalize
         self._cooperativities: set[Cooperativity] = set()
+        self._score_same = score_same
+        self._score_reverse = score_reverse
 
     @classmethod
     def from_specs(
         cls,
         specs_a: Iterable[LayerSpec],
         specs_b: Iterable[LayerSpec],
+        score_same: bool = True,
+        score_reverse: bool = True,
         max_overlap: int | None = None,
         max_spacing: int | None = None,
         normalize: bool = False,
@@ -106,6 +108,8 @@ class Spacing(Spec):
         return cls(
             ModeKey(specs_a),
             ModeKey(specs_b),
+            score_same=score_same,
+            score_reverse=score_reverse,
             max_overlap=max_overlap,
             max_spacing=max_spacing,
             normalize=normalize,
@@ -233,10 +237,20 @@ class Spacing(Spec):
             log_spacing = log_spacing.index_fill(
                 -1,
                 torch.arange(
-                    self.max_num_windows + size_b - self.max_overlap - 2,
+                    self.max_num_windows - size_b + self.max_overlap,
                     self.max_num_windows + size_a - self.max_overlap - 1,
                 ),
                 float("-inf"),
+            )
+
+        # Adjust strands
+        if not self._score_same:
+            log_spacing = log_spacing.index_fill(
+                0, torch.tensor(0), float("-inf")
+            )
+        if not self._score_reverse:
+            log_spacing = log_spacing.index_fill(
+                0, torch.tensor(1), float("-inf")
             )
 
         # Shift to the right index
@@ -490,16 +504,6 @@ class Cooperativity(Binding):
         self.mode_a._cooperativities.discard(alt_coop)
         # pylint: disable-next=protected-access
         self.mode_b._cooperativities.discard(alt_coop)
-        if alt_coop.spacing.max_num_windows < self.spacing.max_num_windows:
-            raise RuntimeError(
-                f"Expected max_num_windows {alt_coop.spacing.max_num_windows}"
-                f", found {self.spacing.max_num_windows}"
-            )
-        if alt_coop.spacing.max_num_windows < self.spacing.max_num_windows:
-            raise RuntimeError(
-                f"Expected max_num_windows {alt_coop.spacing.max_num_windows}"
-                f", found {self.spacing.max_num_windows}"
-            )
         if (
             alt_coop.n_windows_a != self.n_windows_a
             or alt_coop.n_windows_b != self.n_windows_b
@@ -544,9 +548,11 @@ class Cooperativity(Binding):
         if self.key() not in current_order:
             binding_optim = BindingOptim(
                 {ancestry},
-                [Step([Call(ancestry[0], "freeze", {})])]
-                if len(ancestry) > 0
-                else [],
+                (
+                    [Step([Call(ancestry[0], "freeze", {})])]
+                    if len(ancestry) > 0
+                    else []
+                ),
             )
             current_order[self.key()] = binding_optim
         else:
@@ -979,14 +985,20 @@ class Cooperativity(Binding):
             for st_a in range(self.n_strands):
                 for st_b in range(self.n_strands):
                     if posbias:
+                        weight = log_spacing[..., st_a, st_b, :]
+                        if torch.all(torch.isneginf(weight)):
+                            continue
                         diagonal = (
-                            log_spacing[..., st_a, st_b, :]
+                            weight
                             + windows_a[:, st_a, sl_0]
                             + windows_b[:, st_b, sl_1]
                         )
                     else:
+                        weight = log_spacing[0 if st_a == st_b else -1]
+                        if torch.all(torch.isneginf(weight)):
+                            continue
                         diagonal = (
-                            log_spacing[0 if st_a == st_b else -1]
+                            weight
                             + windows_a[:, st_a, sl_0 if st_b == 0 else sl_1]
                             + windows_b[:, st_b, sl_1 if st_b == 0 else sl_0]
                         )

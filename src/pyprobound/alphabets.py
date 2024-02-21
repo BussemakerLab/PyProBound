@@ -1,4 +1,5 @@
 """Alphabets for encoding sequences into tensors."""
+
 import itertools
 from collections.abc import Iterable, Iterator, Mapping
 from typing import cast

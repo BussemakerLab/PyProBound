@@ -12,6 +12,7 @@ TCAG    1   0   0
 A table might also contain flanking sequences on the left and right, which are
 prepended and appended, respectively, to every sequence in the table.
 """
+
 import abc
 import functools
 import gzip
@@ -93,9 +94,11 @@ def score(
         break
     split_size = get_split_size(
         module.max_embedding_size(),
-        len(batch.seqs)
-        if max_split is None
-        else min(max_split, len(batch.seqs)),
+        (
+            len(batch.seqs)
+            if max_split is None
+            else min(max_split, len(batch.seqs))
+        ),
         device,
     )
 

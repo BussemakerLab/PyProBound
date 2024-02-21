@@ -1,9 +1,10 @@
 """Python implementation of ProBound."""
+
 # pylint: disable=undefined-variable
 
 import torch
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __precision__ = torch.float32
 __all__ = [
     "alphabets",

@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 from __future__ import annotations
 
 import math
@@ -136,6 +137,7 @@ class Aggregate(Transform):
         log_target_concentration (Tensor): The total protein concentration
             :math:`[\text{P}]_T` in log space.
     """
+
     unfreezable = Literal[Transform.unfreezable, "concentration"]
 
     def __init__(

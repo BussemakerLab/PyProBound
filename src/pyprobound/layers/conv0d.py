@@ -8,6 +8,7 @@ change the output is the length of the sequence, not its identity. It sets a
 background enrichment level from which a sequence-specific enrichment is
 optimized. If it is included in an aggregate, it should be listed first.
 """
+
 from typing import Any, Literal, TypeVar, overload
 
 import torch
@@ -48,12 +49,10 @@ class NonSpecific(LayerSpec):
         return length * 0 + 1
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> None: ...
 
     @override
     def in_len(

@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 from __future__ import annotations
 
 import collections
@@ -48,12 +49,10 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
         return str(index)
 
     @overload
-    def __getitem__(self, index: int) -> ModuleT:
-        ...
+    def __getitem__(self, index: int) -> ModuleT: ...
 
     @overload
-    def __getitem__(self, index: slice) -> Self:
-        ...
+    def __getitem__(self, index: slice) -> Self: ...
 
     @override
     def __getitem__(self, index: int | slice) -> ModuleT | Self:
@@ -62,12 +61,10 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
         return self._modules[self._get_abs_string_index(index)]
 
     @overload
-    def __setitem__(self, index: int, value: ModuleT) -> None:
-        ...
+    def __setitem__(self, index: int, value: ModuleT) -> None: ...
 
     @overload
-    def __setitem__(self, index: slice, value: Iterable[ModuleT]) -> None:
-        ...
+    def __setitem__(self, index: slice, value: Iterable[ModuleT]) -> None: ...
 
     @override
     def __setitem__(
@@ -94,12 +91,10 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
             setattr(self, str_idx, value)
 
     @overload
-    def __delitem__(self, index: int) -> None:
-        ...
+    def __delitem__(self, index: int) -> None: ...
 
     @overload
-    def __delitem__(self, index: slice) -> None:
-        ...
+    def __delitem__(self, index: slice) -> None: ...
 
     @override
     def __delitem__(self, index: int | slice) -> None:
@@ -156,12 +151,10 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
         return str(index)
 
     @overload
-    def __getitem__(self, index: int) -> Parameter:
-        ...
+    def __getitem__(self, index: int) -> Parameter: ...
 
     @overload
-    def __getitem__(self, index: slice) -> Self:
-        ...
+    def __getitem__(self, index: slice) -> Self: ...
 
     @override
     def __getitem__(self, index: int | slice) -> Parameter | Self:
@@ -170,12 +163,10 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
         return self._parameters[self._get_abs_string_index(index)]
 
     @overload
-    def __setitem__(self, index: int, value: Tensor) -> None:
-        ...
+    def __setitem__(self, index: int, value: Tensor) -> None: ...
 
     @overload
-    def __setitem__(self, index: slice, value: Iterable[Tensor]) -> None:
-        ...
+    def __setitem__(self, index: slice, value: Iterable[Tensor]) -> None: ...
 
     @override
     def __setitem__(
@@ -212,12 +203,10 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
             )
 
     @overload
-    def __delitem__(self, index: int) -> None:
-        ...
+    def __delitem__(self, index: int) -> None: ...
 
     @overload
-    def __delitem__(self, index: slice) -> None:
-        ...
+    def __delitem__(self, index: slice) -> None: ...
 
     @override
     def __delitem__(self, index: int | slice) -> None:
@@ -258,9 +247,9 @@ class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
 
     def __init__(
         self,
-        parameters: Mapping[str, Parameter]
-        | Iterable[tuple[str, Parameter]]
-        | None = None,
+        parameters: (
+            Mapping[str, Parameter] | Iterable[tuple[str, Parameter]] | None
+        ) = None,
         **kwargs: Parameter,
     ) -> None:
         super().__init__()

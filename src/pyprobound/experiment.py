@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 import graphlib
 from collections.abc import Iterable, Iterator
 
@@ -51,9 +52,9 @@ class Experiment(Transform):
             raise ValueError("Cannot repeat the same round twice")
 
         # Get all rounds (including unobserved)
-        sorter: graphlib.TopologicalSorter[
-            BaseRound
-        ] = graphlib.TopologicalSorter()
+        sorter: graphlib.TopologicalSorter[BaseRound] = (
+            graphlib.TopologicalSorter()
+        )
         for rnd in self.observed_rounds:
             while rnd.reference_round is not None:
                 sorter.add(rnd, rnd.reference_round)
@@ -96,7 +97,7 @@ class Experiment(Transform):
 
         .. math::
             \log \frac{\eta_{r} f_{i,r}}{
-                \sum_{r^\prime} \eta_{i} f_{i, r^\prime}
+                \sum_{r^\prime} \eta_{r^\prime} f_{i, r^\prime}
             }
 
         Args:

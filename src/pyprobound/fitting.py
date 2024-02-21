@@ -1,4 +1,5 @@
 """Curve fitting to independent validation data."""
+
 import abc
 import copy
 import os
@@ -213,9 +214,11 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         """Wraps `obs_pred`, automatically managing devices."""
         split_size = get_split_size(
             self.max_embedding_size(),
-            len(batch.seqs)
-            if self.max_split is None
-            else min(self.max_split, len(batch.seqs)),
+            (
+                len(batch.seqs)
+                if self.max_split is None
+                else min(self.max_split, len(batch.seqs))
+            ),
             self.device,
         )
         observations: list[Tensor] = []
@@ -252,9 +255,11 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         for sample in batch:
             split_size = get_split_size(
                 self.max_embedding_size(),
-                len(sample.seqs)
-                if self.max_split is None
-                else min(self.max_split, len(sample.seqs)),
+                (
+                    len(sample.seqs)
+                    if self.max_split is None
+                    else min(self.max_split, len(sample.seqs))
+                ),
                 self.device,
             )
 

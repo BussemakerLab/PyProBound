@@ -2,6 +2,7 @@
 
 Members are explicitly re-exported in pyprobound.
 """
+
 import collections
 import inspect
 import io
@@ -108,12 +109,14 @@ class Optimizer(Generic[T]):
             [
                 DataLoader(
                     table,
-                    batch_size=len(table)
-                    if batch_size is None
-                    else batch_size,
-                    sampler=sampler(table, **sampler_args)
-                    if sampler is not None
-                    else None,
+                    batch_size=(
+                        len(table) if batch_size is None else batch_size
+                    ),
+                    sampler=(
+                        sampler(table, **sampler_args)
+                        if sampler is not None
+                        else None
+                    ),
                 )
                 for table in self.train_tables
             ]
@@ -124,12 +127,14 @@ class Optimizer(Generic[T]):
                 [
                     DataLoader(
                         table,
-                        batch_size=len(table)
-                        if batch_size is None
-                        else batch_size,
-                        sampler=sampler(table, **sampler_args)
-                        if sampler is not None
-                        else None,
+                        batch_size=(
+                            len(table) if batch_size is None else batch_size
+                        ),
+                        sampler=(
+                            sampler(table, **sampler_args)
+                            if sampler is not None
+                            else None
+                        ),
                     )
                     for table in val_tables
                 ]
@@ -191,10 +196,16 @@ class Optimizer(Generic[T]):
         psam: collections.defaultdict[
             tuple[str, bool], list[torch.nn.Parameter]
         ] = collections.defaultdict(list)
+        coop_posbias: collections.defaultdict[
+            str, list[torch.nn.Parameter]
+        ] = collections.defaultdict(list)
         for name, param in self.model.named_parameters():
             if "layer_spec.betas" in name:
                 base, key = name.rsplit(".", 1)
                 psam[(base, len(key.split("-")) == 3)].append(param)
+            elif "log_posbias." in name:
+                base, key = name.rsplit(".", 1)
+                coop_posbias[base].append(param)
             else:
                 out.append(f"\t\t\t\t{name} grad={param.requires_grad}")
                 if param.numel() <= 1:
@@ -207,6 +218,12 @@ class Optimizer(Generic[T]):
             name = f"{key}-{'pairwise' if interaction else 'monomer'}"
             flat_param = torch.stack(cast(list[torch.Tensor], val))
             out.append(f"\t\t\t\t{name} grad={flat_param.requires_grad}")
+            out.append(f"\t\t\t\t\t{param_str(flat_param.detach())}")
+        for key, val in coop_posbias.items():
+            flat_param = torch.cat(
+                cast(list[torch.Tensor], [i.flatten() for i in val])
+            )
+            out.append(f"\t\t\t\t{key} grad={flat_param.requires_grad}")
             out.append(f"\t\t\t\t\t{param_str(flat_param.detach())}")
 
         return "\n".join(out)

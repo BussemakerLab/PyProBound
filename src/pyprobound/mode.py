@@ -101,12 +101,10 @@ class Mode(Binding, LengthManager):
         return self.key().out_len(length=length, mode=mode)
 
     @overload
-    def in_len(self, length: T, mode: Literal["min"]) -> T:
-        ...
+    def in_len(self, length: T, mode: Literal["min"]) -> T: ...
 
     @overload
-    def in_len(self, length: T, mode: Literal["max"]) -> T | None:
-        ...
+    def in_len(self, length: T, mode: Literal["max"]) -> T | None: ...
 
     @override
     def in_len(
@@ -182,9 +180,11 @@ class Mode(Binding, LengthManager):
         if self.key() not in current_order:
             binding_optim = BindingOptim(
                 {ancestry},
-                [Step([Call(ancestry[0], "freeze", {})])]
-                if len(ancestry) > 0
-                else [],
+                (
+                    [Step([Call(ancestry[0], "freeze", {})])]
+                    if len(ancestry) > 0
+                    else []
+                ),
             )
             current_order[self.key()] = binding_optim
         else:
