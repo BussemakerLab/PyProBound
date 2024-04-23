@@ -239,22 +239,52 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
     """A generic tensor encoding of a table, should implement flank management.
 
     Attributes:
-        left_flank_length (int): The length of the prepended sequence.
-        right_flank_length (int): The length of the appended sequence.
+        left_flank (str): The prepended sequence.
+        right_flank (str): The appended sequence.
+        left_flank_length (int): The scored length of the left flank.
+        right_flank_length (int): The scored length of the right flank.
     """
 
     def __init__(
-        self, left_flank_length: int = 0, right_flank_length: int = 0
+        self,
+        left_flank: str = "",
+        right_flank: str = "",
+        left_flank_length: int = 0,
+        right_flank_length: int = 0,
     ) -> None:
         r"""Initializes the table.
 
         Args:
-            left_flank_length: The initial length of the prepended sequence.
-            right_flank_length: The initial length of the appended sequence.
+            left_flank (str): The prepended sequence.
+            right_flank (str): The appended sequence.
+            left_flank_length (int): The scored length of the left flank.
+            right_flank_length (int): The scored length of the right flank.
         """
-        self.left_flank_length = 0
-        self.right_flank_length = 0
+        self._left_flank = left_flank
+        self._right_flank = right_flank
+        self._left_flank_length = 0
+        self._right_flank_length = 0
         self.set_flank_length(left=left_flank_length, right=right_flank_length)
+
+    @property
+    def left_flank(self) -> str:
+        """The prepended sequence."""
+        return self._left_flank
+
+    @property
+    def right_flank(self) -> str:
+        """The appended sequence."""
+        return self._right_flank
+
+    @property
+    def left_flank_length(self) -> int:
+        """The scored length of the left flank."""
+        return self._left_flank_length
+
+    @property
+    def right_flank_length(self) -> int:
+        """The scored length of the right flank."""
+        return self._right_flank_length
 
     @property
     @abc.abstractmethod
@@ -286,11 +316,20 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
 
 
 class CountTable(Table[CountBatch]):
-    """A tensor encoding of a count table with flank management.
+    r"""A tensor encoding of a count table with flank management.
 
     Attributes:
-        left_flank_length (int): The length of the prepended sequence.
-        right_flank_length (int): The length of the appended sequence.
+        seqs (Tensor): A sequence tensor of shape
+            :math:`(\text{minibatch},\text{length})` or
+            :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+        target (Tensor): A count tensor of shape
+            :math:`(\text{minibatch},\text{rounds})`.
+        left_flank (str): The prepended sequence.
+        right_flank (str): The appended sequence.
+        left_flank_length (int): The scored length of the left flank.
+        right_flank_length (int): The scored length of the right flank.
+        counts_per_round (Tensor): The number of probes in each round of the
+            count table, as a count tensor of shape :math:`(\text{rounds})`.
     """
 
     def __init__(
@@ -304,7 +343,7 @@ class CountTable(Table[CountBatch]):
         right_flank_length: int = 0,
         max_left_flank_length: int | None = None,
         max_right_flank_length: int | None = None,
-        zero_pad: bool = False,
+        wildcard_pad: bool = False,
         min_variable_length: int | None = None,
         max_variable_length: int | None = None,
     ) -> None:
@@ -314,16 +353,16 @@ class CountTable(Table[CountBatch]):
             dataframe: The dataframe used to initialize the count table.
             alphabet: The alphabet used to encode sequences into tensors.
             transliterate: A mapping of strings to be replaced before encoding.
-            left_flank: The prepended sequence.
-            right_flank: The appended sequence.
-            left_flank_length: The initial length of the prepended sequence.
-            right_flank_length: The initial length of the appended sequence.
+            left_flank (str): The prepended sequence.
+            right_flank (str): The appended sequence.
+            left_flank_length (int): The scored length of the left flank.
+            right_flank_length (int): The scored length of the right flank.
             max_left_flank_length: The maximum allowed length of the prepended
                 sequence.
             max_right_flank_length: The maximum allowed length of the appended
                 sequence.
-            zero_pad: Whether to append a wildcard character to all sequences
-                to make them the same length.
+            wildcard_pad: Whether to append a wildcard character
+                (ex. N for DNA) to all sequences to make them the same length.
             min_variable_length: The minimum possible length of the sequences
                 (needed if using train/test splits on variable length data).
             max_variable_length: The maximum possible length of the sequences
@@ -345,23 +384,21 @@ class CountTable(Table[CountBatch]):
 
         # Instance attributes
         self.alphabet = alphabet
-        self.left_flank = left_flank
-        self.right_flank = right_flank
         if max_left_flank_length is None:
             max_left_flank_length = len(left_flank)
         if max_right_flank_length is None:
             max_right_flank_length = len(right_flank)
         self.max_left_flank_length = max_left_flank_length
         self.max_right_flank_length = max_right_flank_length
-        self.zero_padded = zero_pad
+        self.wildcard_padded = wildcard_pad
 
         # Get dataframe data
-        self.padding_value = alphabet.get_index["*" if zero_pad else " "]
+        self._padding_value = alphabet.get_index["*" if wildcard_pad else " "]
         self.target = torch.tensor(dataframe.values, dtype=__precision__)
         self.seqs = torch.nn.utils.rnn.pad_sequence(
             [alphabet.translate(seq) for seq in dataframe.index],
             batch_first=True,
-            padding_value=self.padding_value,
+            padding_value=self._padding_value,
         )
 
         # Store variable lengths
@@ -384,12 +421,12 @@ class CountTable(Table[CountBatch]):
                 "max_variable_length is smaller than"
                 " the longest sequence in dataframe"
             )
-        self.min_variable_length = min_variable_length
-        self.max_variable_length = max_variable_length
+        self._min_variable_length = min_variable_length
+        self._max_variable_length = max_variable_length
         self.seqs = F.pad(
             self.seqs,
-            (0, self.max_variable_length - self.input_shape),
-            value=self.padding_value,
+            (0, self._max_variable_length - self.input_shape),
+            value=self._padding_value,
         ).contiguous()
 
         # Get number of probes per round
@@ -397,6 +434,8 @@ class CountTable(Table[CountBatch]):
 
         # Set flank length
         super().__init__(
+            left_flank=left_flank,
+            right_flank=right_flank,
             left_flank_length=left_flank_length,
             right_flank_length=right_flank_length,
         )
@@ -409,30 +448,30 @@ class CountTable(Table[CountBatch]):
     @override
     @property
     def min_read_length(self) -> int:
-        if self.zero_padded:
+        if self.wildcard_padded:
             return self.max_read_length
         return (
-            self.min_variable_length
-            + self.left_flank_length
-            + self.right_flank_length
+            self._min_variable_length
+            + self._left_flank_length
+            + self._right_flank_length
         )
 
     @override
     @property
     def max_read_length(self) -> int:
         return (
-            self.max_variable_length
-            + self.left_flank_length
-            + self.right_flank_length
+            self._max_variable_length
+            + self._left_flank_length
+            + self._right_flank_length
         )
 
     @override
     def get_setup_string(self) -> str:
         return "\n".join(
             [
-                f"\t\tMaximum Variable Length: {self.max_variable_length}",
-                f"\t\tLeft Flank Length: {self.left_flank_length}",
-                f"\t\tRight Flank Length: {self.right_flank_length}",
+                f"\t\tMaximum Variable Length: {self._max_variable_length}",
+                f"\t\tLeft Flank Length: {self._left_flank_length}",
+                f"\t\tRight Flank Length: {self._right_flank_length}",
             ]
         )
 
@@ -451,19 +490,22 @@ class CountTable(Table[CountBatch]):
             )
         if left < 0 or right < 0:
             raise ValueError("Flank lengths must be nonnegative")
-        if self.left_flank_length == left and self.right_flank_length == right:
+        if (
+            self._left_flank_length == left
+            and self._right_flank_length == right
+        ):
             return
 
         # Trim new flanks to desired lengths
         old_left_flank = self.left_flank[
-            len(self.left_flank) - self.left_flank_length :
+            len(self.left_flank) - self._left_flank_length :
         ]
         left_flank = self.left_flank.rjust(left, "*")[
             len(self.left_flank) - left :
         ]
         old_left_flank_tr = self.alphabet.translate(old_left_flank)
         left_flank_tr = self.alphabet.translate(left_flank)
-        old_right_flank = self.right_flank[: self.right_flank_length]
+        old_right_flank = self.right_flank[: self._right_flank_length]
         right_flank = self.right_flank.ljust(right, "*")[:right]
         right_flank_tr = self.alphabet.translate(right_flank)
         old_right_flank_tr = self.alphabet.translate(old_right_flank)
@@ -474,7 +516,7 @@ class CountTable(Table[CountBatch]):
             self.seqs = self.seqs[
                 :, len(old_left_flank_tr) - len(left_flank_tr) :
             ]
-        elif left > self.left_flank_length:
+        elif left > self._left_flank_length:
             # Extending left flank
             left_update = left_flank_tr[
                 : len(left_flank_tr) - len(old_left_flank_tr)
@@ -482,7 +524,7 @@ class CountTable(Table[CountBatch]):
             self.seqs = torch.hstack(
                 (left_update.expand(len(self), -1), self.seqs)
             )
-        self.left_flank_length = left
+        self._left_flank_length = left
 
         # Update right flank
         if len(right_flank_tr) < len(old_right_flank_tr):
@@ -504,7 +546,7 @@ class CountTable(Table[CountBatch]):
         else:
             # Extending right flank
             diff = len(right_flank_tr) - len(old_right_flank_tr)
-            self.seqs = F.pad(self.seqs, (0, diff), value=self.padding_value)
+            self.seqs = F.pad(self.seqs, (0, diff), value=self._padding_value)
             indices = (
                 self.variable_lengths.expand(len(self), diff)
                 + torch.arange(diff)
@@ -517,7 +559,7 @@ class CountTable(Table[CountBatch]):
             self.seqs = self.seqs.scatter_(
                 1, indices, right_update.expand(len(self), -1)
             )
-        self.right_flank_length = right
+        self._right_flank_length = right
 
         # Make contiguous
         self.seqs = self.seqs.contiguous()
@@ -542,10 +584,10 @@ class CountTable(Table[CountBatch]):
         self.seqs = self.seqs[inv_idx].contiguous()
         self.target = self.target[inv_idx].contiguous()
         self.variable_lengths = self.variable_lengths[inv_idx].contiguous()
-        self.min_variable_length = cast(
+        self._min_variable_length = cast(
             int, self.variable_lengths.min().item()
         )
-        self.max_variable_length = cast(
+        self._max_variable_length = cast(
             int, self.variable_lengths.max().item()
         )
         self.counts_per_round = torch.sum(self.target, dim=0)

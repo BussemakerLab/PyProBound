@@ -123,7 +123,7 @@ class BaseTestCases:
             pad_val: float = self.count_table.alphabet.neginf_pad
             if self.count_table.seqs.ndim == 3:
                 pad_val = float("-inf")
-            insert[..., self.count_table.min_variable_length - 1 :] = pad_val
+            insert[..., self.count_table._min_variable_length - 1 :] = pad_val
             self.count_table.seqs = torch.cat([self.count_table.seqs, insert])
 
             self.layer.update_input_length(min_len_shift=-1)
