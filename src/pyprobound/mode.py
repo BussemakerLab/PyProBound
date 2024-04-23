@@ -56,6 +56,11 @@ class Mode(Binding, LengthManager):
         for layer_idx, layer in enumerate(self.layers):
             layer._modes.add((self, layer_idx))
 
+        if len(self.layers) == 0:
+            raise ValueError(
+                "Cannot create binding mode with empty layers argument"
+            )
+
         # Store model attributes
         self.train_hill = train_hill
         self.log_hill = torch.nn.Parameter(

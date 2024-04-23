@@ -215,7 +215,7 @@ class DNA(Alphabet):
     """Stores the DNA encoding of sequences into tensors.
 
     Three sequence characters are reserved: ' ' is -infinity (not scored),
-    '*' is an uninformative prior over channels, and '-' is zero.
+    '*' is the IUPAC wildcard character N, and '-' is zero.
 
     Attributes:
         alphabet (tuple[str]): ('A', 'C', 'G', 'T').
@@ -240,7 +240,7 @@ class RNA(Alphabet):
     """Stores the RNA encoding of sequences into tensors.
 
     Three sequence characters are reserved: ' ' is -infinity (not scored),
-    '*' is an uninformative prior over channels, and '-' is zero.
+    '*' is the IUPAC wildcard character N, and '-' is zero.
 
     Attributes:
         alphabet (tuple[str]): ('A', 'C', 'G', 'U').
@@ -268,7 +268,7 @@ class Codon(Alphabet):
     r"""Stores the codon encoding of sequences into tensors.
 
     Three sequence characters are reserved: '   ' is -infinity (not scored),
-    '***' is an uninformative prior over channels, and '---' is zero.
+    '***' is the IUPAC wildcard character NNN, and '---' is zero.
 
     Attributes:
         alphabet (tuple[str]): All :math:`_{4}P_{3}` permutations of the DNA
@@ -303,7 +303,7 @@ class Protein(Alphabet):
     """Stores the protein encoding of sequences into tensors.
 
     Three sequence characters are reserved: ' ' is -infinity (not scored),
-    '*' is an uninformative prior over channels, and '-' is zero.
+    '*' is the IUPAC wildcard character X, and '-' is zero.
 
     Attributes:
         alphabet (tuple[str]): All 20 one-letter amino acid codes.

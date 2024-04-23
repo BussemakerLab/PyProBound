@@ -213,7 +213,7 @@ class Optimizer(Generic[T]):
                 else:
                     out.append(f"\t\t\t\t\t{param_str(param.detach())}")
 
-        torch.set_printoptions(threshold=1000)  # type: ignore[no-untyped-call]
+        torch.set_printoptions(threshold=100)  # type: ignore[no-untyped-call]
         for (key, interaction), val in psam.items():
             name = f"{key}-{'pairwise' if interaction else 'monomer'}"
             flat_param = torch.stack(cast(list[torch.Tensor], val))

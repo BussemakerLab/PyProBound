@@ -388,7 +388,7 @@ class UnboundRound(Round):
 
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
-        return -F.softplus(self.log_aggregate(seqs))
+        return F.logsigmoid(-self.log_aggregate(seqs))
 
 
 class RhoGammaRound(Round):
@@ -508,9 +508,9 @@ class RhoGammaRound(Round):
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
         log_agg = self.log_aggregate(seqs)
-        return torch.exp(self.log_rho) * log_agg - torch.exp(
+        return torch.exp(self.log_rho) * log_agg + torch.exp(
             self.log_gamma
-        ) * F.softplus(log_agg)
+        ) * F.logsigmoid(-log_agg)
 
 
 class ExponentialRound(Round):
