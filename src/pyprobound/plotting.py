@@ -1,20 +1,21 @@
 """Module of miscellaneous plotting functions."""
+
 import copy
 import math
 import warnings
 from collections.abc import Collection
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 import logomaker
 import matplotlib
 import matplotlib.collections
 import matplotlib.font_manager
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import scipy
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from numpy.typing import NDArray
 from torch import Tensor
 
@@ -34,6 +35,8 @@ gnbu_mod = matplotlib.colors.LinearSegmentedColormap.from_list(
 )
 cmap = matplotlib.colormaps["bwr"].copy()
 cmap.set_bad(color="gray")
+
+AxesArray: TypeAlias = NDArray[Any]
 
 
 def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
@@ -84,10 +87,131 @@ def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
         )
 
 
+def logomaker_plotter(
+    ax: Axes, psam: PSAM, reverse: bool = False, **kwargs: Any
+) -> logomaker.Logo:
+    """Plots the monomer sequence logo for the given PSAM using Logomaker.
+
+    Args:
+        ax: The Axes to draw to.
+        psam: A PSAM to plot into a logo.
+        reverse: Whether to plot the reverse complement.
+    """
+    if psam.out_channels // psam.n_strands != 1:
+        raise ValueError("Cannot plot logo for multi-channel PSAMs")
+    if psam.alphabet is None:
+        raise ValueError("Cannot plot logo for PSAMs without alphabets")
+
+    # Create monomer dataframe
+    matrix: NDArray[np.float32] = (
+        psam.get_filter(0)
+        .detach()[0]
+        .T.to(device="cpu", dtype=torch.float32)
+        .numpy()
+    )
+    matrix -= matrix.mean(1, keepdims=True)
+    matrix = np.flip(matrix, axis=(0, 1)) if reverse else matrix
+    dataframe = pd.DataFrame(matrix, columns=psam.alphabet.alphabet)
+    dataframe.columns = dataframe.columns.astype(str)
+
+    # Set font
+    if "Helvetica" in matplotlib.font_manager.findfont("Helvetica"):
+        font_name = "Helvetica"
+    else:
+        font_name = "DejaVu Sans"
+
+    # Draw PSAM with Logomaker
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        out = logomaker.Logo(
+            dataframe,
+            ax=ax,
+            shade_below=0.5,
+            fade_below=0.5,
+            font_name=font_name,
+            color_scheme=psam.alphabet.color_scheme,
+            **kwargs,
+        )
+
+    # Adjust labels
+    out.style_spines(visible=False)
+    out.style_spines(spines=["left", "bottom"], visible=True)
+    ax.set_ylabel(r"$-\Delta \Delta$G/RT", labelpad=-1)
+    labels = np.arange(psam.kernel_size)
+    ax.set_xticks(labels, labels)
+
+    return out
+
+
+def pairwise_plotter(
+    ax: Axes, psam: PSAM, reverse: bool = False, **kwargs: Any
+) -> matplotlib.image.AxesImage:
+    """Plots the pairwise heatmap for the given PSAM.
+
+    Args:
+        ax: The Axes to draw to.
+        psam: A PSAM to plot into a logo.
+        reverse: Whether to plot the reverse complement.
+    """
+    matrices = [
+        cast(
+            NDArray[np.float32],
+            torch.movedim(psam.get_filter(i).detach(), -1, 1)[0]
+            .to(device="cpu", dtype=torch.float32)
+            .numpy(),
+        )
+        for i in range(psam.pairwise_distance + 1)
+    ]
+
+    # Binding mode attributes
+    in_channels = psam.in_channels
+    size = len(psam.symmetry)
+
+    # Create empty heatmap matrix
+    heatmap = np.empty((size * in_channels, size * in_channels))
+    heatmap[:] = np.NaN
+
+    # Fill heatmap matrix
+    for dist in range(1, len(matrices)):
+        matrix = matrices[dist]
+        for pos in range(size - dist):
+            x, y = (pos + dist) * in_channels, pos * in_channels
+            heatmap[x : x + in_channels, y : y + in_channels] = matrix[pos]
+            heatmap[y : y + in_channels, x : x + in_channels] = matrix[pos].T
+
+    if reverse:
+        heatmap = np.flipud(np.fliplr(heatmap))
+
+    # Draw labels
+    positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
+    labels = np.arange(size)
+    ax.set_xticks(positions, labels)
+    ax.set_yticks(positions, labels)
+
+    # Draw heatmap
+    max_val = max(
+        1e-15,
+        cast(float, np.nanmax(heatmap)),
+        cast(float, np.nanmax(-heatmap)),
+    )
+    return ax.imshow(
+        heatmap,
+        interpolation="none",
+        cmap=cmap,
+        vmin=-max_val,
+        vmax=max_val,
+        **kwargs,
+    )
+
+
 def logo(
-    psam: PSAM, reverse: bool = False, fix_gauge: bool = True
-) -> matplotlib.figure.Figure:
-    """Plots a sequence logo for the given PSAM using Logomaker.
+    psam: PSAM,
+    logo_height: int = 2,
+    width: int = 8,
+    reverse: bool = False,
+    fix_gauge: bool = True,
+) -> None:
+    """Plots a sequence recognition logo for the given PSAM.
 
     Args:
         psam: A PSAM to plot into a logo.
@@ -103,29 +227,11 @@ def logo(
         psam = copy.deepcopy(psam)
         psam.fix_gauge()
 
-    matrices = [
-        cast(
-            NDArray[Any],
-            torch.movedim(psam.get_filter(i).detach(), -1, 1)[0]
-            .float()
-            .cpu()
-            .numpy(),
-        )
-        for i in range(psam.pairwise_distance + 1)
-    ]
-
-    # Binding mode attributes
-    in_channels = psam.in_channels
-    size = len(psam.symmetry)
-    positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
-
     # Set up subplots
     pairwise = psam.pairwise_distance > 0
-    width = 7 if pairwise else 8
-    logo_height = width / 4
     colorbar_width = width / 20
     if pairwise:
-        fig, axs = plt.subplots(
+        fig, ax = plt.subplots(
             nrows=2,
             ncols=2,
             figsize=(width + colorbar_width, width + logo_height),
@@ -133,98 +239,22 @@ def logo(
                 "height_ratios": [logo_height, width],
                 "width_ratios": [width, colorbar_width],
             },
+            tight_layout=True,
         )
+        axs = cast(AxesArray, ax)
         axs[0, 1].axis("off")
         axs[1, 1].axis("off")
     else:
-        fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(width, logo_height))
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(width, logo_height))
+        ax = cast(Axes, ax)
 
-    # Set up monomer matrix
-    matrix = matrices[0]
-    matrix -= matrix.mean(1, keepdims=True)
-    matrix = np.flip(matrix, axis=(0, 1)) if reverse else matrix
-
-    if psam.alphabet is not None:
-        # Create sequence logo
-        dataframe = pd.DataFrame(matrix, columns=psam.alphabet.alphabet)
-        dataframe.columns = dataframe.columns.astype(str)
-        if "Helvetica" in matplotlib.font_manager.findfont("Helvetica"):
-            font_name = "Helvetica"
-        else:
-            font_name = "DejaVu Sans"
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            energy_logo = logomaker.Logo(
-                dataframe,
-                ax=axs[0, 0] if pairwise else axs,
-                shade_below=0.5,
-                fade_below=0.5,
-                font_name=font_name,
-                color_scheme=psam.alphabet.color_scheme,
-            )
-        energy_logo.style_spines(visible=False)
-        energy_logo.style_spines(spines=["left", "bottom"], visible=True)
-        energy_logo.ax.set_ylabel(r"$-\Delta \Delta$G/RT", labelpad=-1)
-        energy_logo.ax.set_xlabel("position", labelpad=-1)
-        energy_logo.ax.xaxis.set_ticks_position("none")
-        energy_logo.ax.xaxis.set_tick_params(pad=-1)
-    else:
-        max_val = max(np.nanmax(matrix), np.nanmax(-matrix), 1e-8)
-        axs_curr = axs[0, 0] if pairwise else axs
-        axs_curr.imshow(
-            matrix.T,
-            interpolation="none",
-            cmap=cmap,
-            vmin=-max_val,
-            vmax=max_val,
-            aspect="auto",
-        )
-        axs_curr.set_ylabel("channels")
-        axs_curr.set_xlabel("position")
+    # Create monomer logo
+    logomaker_plotter(axs[0, 0] if pairwise else ax, psam, reverse)
 
     # Create pairwise logo
     if pairwise:
-        # Create empty heatmap matrix
-        heatmap = np.empty((size * in_channels, size * in_channels))
-        heatmap[:] = np.NaN
-
-        # Fill heatmap matrix
-        for dist in range(1, len(matrices)):
-            matrix = matrices[dist]
-            for pos in range(size - dist):
-                x, y = (pos + dist) * in_channels, pos * in_channels
-                heatmap[x : x + in_channels, y : y + in_channels] = matrix[pos]
-                heatmap[y : y + in_channels, x : x + in_channels] = matrix[
-                    pos
-                ].T
-
-        if reverse:
-            heatmap = np.flipud(np.fliplr(heatmap))
-
-        # Draw heatmap
-        max_val = max(
-            1e-15,
-            cast(float, np.nanmax(heatmap)),
-            cast(float, np.nanmax(-heatmap)),
-        )
-        axs[1, 0].imshow(
-            heatmap,
-            interpolation="none",
-            cmap=cmap,
-            vmin=-max_val,
-            vmax=max_val,
-        )
-
-        # Draw labels
-        positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
-        labels = np.arange(size)
-        axs[1, 0].set_xticks(positions, labels)
-        axs[1, 0].set_yticks(positions, labels)
-
-        # Draw colorbar
-        colorbar = plt.cm.ScalarMappable(cmap=cmap)
-        colorbar.set_clim(-max_val, max_val)
-        fig.colorbar(colorbar, ax=axs[1, 1], fraction=1, pad=0)
+        heatmap = pairwise_plotter(axs[1, 0], psam, reverse)
+        fig.colorbar(heatmap, ax=axs[1, 1], fraction=1, pad=0)
 
     # Add title
     title = psam.name
@@ -235,18 +265,20 @@ def logo(
     else:
         plt.title(title)
 
-    # Output
-    return fig
 
-
-def posbias(conv1d: Conv0d | Conv1d) -> matplotlib.figure.Figure:
+def posbias(conv1d: Conv0d | Conv1d) -> None:
     r"""Plots the position bias profile :math:`\omega(x)`.
 
     Args:
         conv1d: A component containing a position bias profile.
     """
     # Get position bias for each output channel
-    out_list = conv1d.get_log_posbias().detach().float().cpu().unbind(1)
+    out_list = (
+        conv1d.get_log_posbias()
+        .detach()
+        .to(device="cpu", dtype=torch.float32)
+        .unbind(1)
+    )
     if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
         out_list = [out[conv1d.min_input_length :] for out in out_list]
 
@@ -259,21 +291,22 @@ def posbias(conv1d: Conv0d | Conv1d) -> matplotlib.figure.Figure:
     # Create figure
     rows = sum(len(out) for out in out_list)
     columns = len(out_list[0][0])
-    figsize = (min(max(columns, 2), 10), min(max(rows, 2), 10))
+    figsize = (min(max(columns, 2), 10), 1.5 * min(max(rows, 1.5), 10))
     if figsize[1] > 2 * figsize[0]:
         figsize = (figsize[0], 2 * figsize[0])
-    fig, axs = plt.subplots(
+    fig, ax = plt.subplots(
         nrows=len(out_list),
         figsize=figsize,
         sharex=True,
         constrained_layout=True,
     )
     if len(out_list) == 1:
-        axs = np.array([axs])
+        ax = np.array([ax])
+    axs = cast(AxesArray, ax)
 
     # Add each output channel to figure
     for i_out, out in enumerate(out_list):
-        axs[i_out].imshow(
+        heatmap = axs[i_out].imshow(
             torch.exp(out),
             interpolation="none",
             cmap=cmap,
@@ -313,21 +346,17 @@ def posbias(conv1d: Conv0d | Conv1d) -> matplotlib.figure.Figure:
     fig.suptitle(f"{conv1d.layer_spec.name} posbias")
 
     # Draw colorbar
-    colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     fig.colorbar(
-        colorbar,
+        heatmap,
         ax=axs.ravel().tolist(),
         fraction=1,
         location="bottom" if rows < columns else "right",
     )
 
-    # Output
-    return fig
-
 
 def cooperativity(
     spacing_matrix: Spacing | Cooperativity, len_a: int = -1, len_b: int = -1
-) -> matplotlib.figure.Figure:
+) -> None:
     r"""Plots the cooperativity position bias :math:`\omega_{a:b}(x^a, x^b)`.
 
     Args:
@@ -335,16 +364,17 @@ def cooperativity(
         len_a: The input length for mode `a`, if length-specific position bias.
         len_b: The input length for mode `b`, if length-specific position bias.
     """
-    fig = plt.figure(figsize=(6, 5), constrained_layout=True)
-    axs = fig.subplots(
+    fig, ax = plt.subplots(
         spacing_matrix.n_strands,
         spacing_matrix.n_strands,
+        figsize=(6, 5),
         sharex=True,
         sharey=True,
+        constrained_layout=True,
     )
     if spacing_matrix.n_strands == 1:
-        axs = np.array([[axs]])
-    axs = cast(npt.NDArray[Any], axs)
+        ax = np.array([[ax]])
+    axs = cast(AxesArray, ax)
 
     # Get spacing matrix and axis labels
     if isinstance(spacing_matrix, Spacing):
@@ -353,8 +383,7 @@ def cooperativity(
                 spacing_matrix.max_num_windows, spacing_matrix.max_num_windows
             )
             .detach()
-            .float()
-            .cpu()
+            .to(device="cpu", dtype=torch.float32)
         )
         fig.supylabel("-".join([i.name for i in spacing_matrix.mode_key_a]))
         fig.supxlabel("-".join([i.name for i in spacing_matrix.mode_key_b]))
@@ -369,9 +398,9 @@ def cooperativity(
     norm = matplotlib.colors.LogNorm(
         vmin=np.exp(-max_val), vmax=np.exp(max_val)
     )
-    for axs_0, strand_0 in zip(axs, out):
-        for ax, strand_1 in zip(axs_0, strand_0):
-            ax.imshow(
+    for ax_0, strand_0 in zip(ax, out):
+        for ax, strand_1 in zip(ax_0, strand_0):
+            heatmap = ax.imshow(
                 strand_1,
                 interpolation="none",
                 cmap=cmap,
@@ -394,22 +423,21 @@ def cooperativity(
         axs[1, 1].set_xlabel("Reverse")
 
     # Draw colorbar
-    colorbar = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    fig.colorbar(
-        colorbar, ax=axs.ravel().tolist(), fraction=1, location="right"
-    )
-
-    # Output
-    return fig
+    fig.colorbar(heatmap, ax=axs, location="right")
 
 
-def _enrichment(
+def enrichment_plotter(
+    ax: Axes,
     counts_obs: Tensor,
     counts_pred: Tensor,
     columns: list[int],
     kernel: int = 1,
     title: str = "",
-) -> matplotlib.figure.Figure:
+    **kwargs: Any,
+) -> (
+    matplotlib.collections.PathCollection
+    | matplotlib.collections.PolyCollection
+):
     r"""Draws the enrichment scatterplot.
 
     Args:
@@ -421,7 +449,6 @@ def _enrichment(
         kernel: The bin for average pooling of enrichment-sorted sequences.
         title: The plot title.
     """
-
     if counts_obs.shape != counts_pred.shape:
         raise ValueError(
             f"counts_obs shape {counts_obs.shape} does not match"
@@ -434,24 +461,9 @@ def _enrichment(
             f" counts_obs shape {counts_obs.shape}"
         )
 
-    # Setup subplots
     hexbin = len(columns) <= 2 and len(counts_pred) / kernel > 500
-    if hexbin:
-        fig, axs = plt.subplots(
-            ncols=2,
-            figsize=(5.5, 5),
-            gridspec_kw={"width_ratios": [5, 0.5]},
-            constrained_layout=True,
-        )
-        axs[1].axis("off")
-    else:
-        fig, axs = plt.subplots(figsize=(5, 5), constrained_layout=True)
-        plt.yscale("log")
-        plt.xscale("log")
 
     # Plot binned enrichments
-    min_range = float("inf")
-    max_range = float("-inf")
     n_bins = 0
     for i in range(len(columns) - 1):
         # Get the columns
@@ -482,10 +494,6 @@ def _enrichment(
         x_pred = ((cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)).float()
         y_obs = ((cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)).float()
 
-        # Update range
-        min_range = min(min_range, x_pred.min().item(), y_obs.min().item())
-        max_range = max(max_range, x_pred.max().item(), y_obs.max().item())
-
         # Plot and print statistics
         spearman = scipy.stats.spearmanr(x_pred, y_obs).statistic
         pearson = scipy.stats.pearsonr(x_pred.log(), y_obs.log()).statistic
@@ -495,8 +503,12 @@ def _enrichment(
             rf" $R\in$ [{y_obs.min().item():.2e},{y_obs.max().item():.2e}]"
             f"\n$r_s$={spearman:.3f}, $r$={pearson:.3f}, RMSLE={rmsle:.3f}"
         )
+        out: (
+            matplotlib.collections.PathCollection
+            | matplotlib.collections.PolyCollection
+        )
         if hexbin:
-            binplot = axs[0].hexbin(
+            out = ax.hexbin(
                 x_pred,
                 y_obs,
                 cmap=gnbu_mod,
@@ -504,28 +516,31 @@ def _enrichment(
                 bins="log",
                 xscale="log",
                 yscale="log",
+                **kwargs,
             )
-            fig.colorbar(binplot, ax=axs[1], fraction=1, pad=0)
         else:
-            axs.scatter(x_pred, y_obs, label=label, alpha=0.5)
+            out = ax.scatter(x_pred, y_obs, label=label, alpha=0.5)
+            ax.set_yscale("log")
+            ax.set_xscale("log")
 
     # Make square
-    curr_ax = axs[0] if hexbin else axs
-    curr_ax.plot([min_range, max_range], [min_range, max_range], "k--")
-    curr_ax.set_xlim(0.9 * min_range, 1.1 * max_range)
-    curr_ax.set_ylim(0.9 * min_range, 1.1 * max_range)
+    min_range = 1.1 * min(ax.get_xlim()[0], ax.get_ylim()[0])
+    max_range = 0.9 * max(ax.get_xlim()[1], ax.get_ylim()[1])
+    ax.plot([min_range, max_range], [min_range, max_range], "k--")
+    ax.set_xlim(0.9 * min_range, 1.1 * max_range)
+    ax.set_ylim(0.9 * min_range, 1.1 * max_range)
 
-    # Add title, legend, labels, and colorbar
+    # Add title, legend, and labels
     if kernel > 1:
         title += f" ({n_bins:,} bins of n={kernel})"
     else:
         title += f" ({n_bins:,} probes)"
-    curr_ax.set_title(title)
-    curr_ax.set_xlabel("Predicted Enrichment")
-    curr_ax.set_ylabel("Observed Enrichment")
-    curr_ax.legend(loc="lower right")
+    ax.set_title(title)
+    ax.set_xlabel("Predicted Enrichment")
+    ax.set_ylabel("Observed Enrichment")
+    ax.legend(loc="lower right")
 
-    return fig
+    return out
 
 
 def probe_enrichment(
@@ -534,7 +549,7 @@ def probe_enrichment(
     columns: list[int] | None = None,
     kernel: int = 500,
     max_split: int | None = None,
-) -> matplotlib.figure.Figure:
+) -> None:
     """Plots the enrichment of sequences, binned by predicted enrichment.
 
     Args:
@@ -544,19 +559,20 @@ def probe_enrichment(
         kernel: The bin for average pooling of enrichment-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
     """
-
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
-    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
-
-    return _enrichment(
+    fig, ax = plt.subplots(figsize=(5, 5))
+    out = enrichment_plotter(
+        ax,
         counts_obs,
-        counts_pred,
+        torch.exp(counts_pred),
         columns=columns,
         kernel=kernel,
         title=f"{experiment.name} Probe-Level Enr.",
     )
+    if isinstance(out, matplotlib.collections.PolyCollection):
+        fig.colorbar(out, ax=ax)
 
 
 def kmer_enrichment(
@@ -566,7 +582,7 @@ def kmer_enrichment(
     kmer_length: int = 3,
     kernel: int = 500,
     max_split: int | None = None,
-) -> matplotlib.figure.Figure:
+) -> None:
     """Plots the enrichment of k-mers, binned by predicted enrichment.
 
     Args:
@@ -576,22 +592,23 @@ def kmer_enrichment(
         kernel: The bin for average pooling of enrichment-sorted k-mers.
         max_split: Maximum number of sequences scored at a time.
     """
-
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
-    counts_pred = torch.exp(counts_pred) * counts_obs.sum(dim=1, keepdim=True)
     kmer_counts = count_kmers(batch.seqs, kmer_length=kmer_length)
     counts_obs = kmer_counts @ counts_obs
-    counts_pred = kmer_counts @ counts_pred
+    counts_pred = kmer_counts @ torch.exp(counts_pred)
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
-
-    return _enrichment(
+    fig, ax = plt.subplots(figsize=(5, 5))
+    out = enrichment_plotter(
+        ax,
         counts_obs,
         counts_pred,
         columns=columns,
         kernel=kernel,
         title=f"{experiment.name} {kmer_length}-mer Enr.",
     )
+    if isinstance(out, matplotlib.collections.PolyCollection):
+        fig.colorbar(out, ax=ax)
 
 
 def kd_consistency(
@@ -602,7 +619,7 @@ def kd_consistency(
     batch: CountBatch,
     kernel: int = 500,
     max_split: int | None = None,
-) -> matplotlib.figure.Figure:
+) -> None:
     """Plots the bound and unbound fractions, binned by predicted Kd.
 
     Args:
@@ -614,7 +631,6 @@ def kd_consistency(
         kernel: The bin for average pooling of Kd-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
     """
-
     # Get Kd's
     i_round = experiment.rounds[i_index]
     b_round = experiment.rounds[b_index]
@@ -661,9 +677,10 @@ def kd_consistency(
     ) * torch.exp(i_round.log_depth - u_round.log_depth).detach().cpu()
 
     # Plot
-    fig, axs = plt.subplots(
+    fig, ax = plt.subplots(
         2, 1, figsize=(5, 5), constrained_layout=True, sharex=True
     )
+    axs = cast(AxesArray, ax)
     axs[1].set_xscale("log")
     axs[1].set_xlabel(r"Predicted $1/K_D$")
 
@@ -690,9 +707,6 @@ def kd_consistency(
         title += f" ({len(counts_obs):,} probes)"
     fig.suptitle(title)
 
-    # Output
-    return fig
-
 
 def keff_consistency(
     experiment: Experiment,
@@ -700,7 +714,7 @@ def keff_consistency(
     columns: list[int] | None = None,
     kernel: int = 500,
     max_split: int | None = None,
-) -> matplotlib.figure.Figure:
+) -> None:
     """Plots the modified fraction, binned by predicted Kd.
 
     Args:
@@ -717,7 +731,8 @@ def keff_consistency(
             if isinstance(rnd, ExponentialRound)
         ]
 
-    fig, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
+    _, ax = plt.subplots(figsize=(6, 3), constrained_layout=True)
+    axs = cast(Axes, ax)
 
     # Get counts of all rounds
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
@@ -792,16 +807,13 @@ def keff_consistency(
         title += f" ({n_bins:,} probes)"
     axs.set_title(title)
 
-    # Output
-    return fig
-
 
 def contribution(
     rnd: BaseRound | Aggregate,
     batch: CountBatch,
     kernel: int = 500,
     max_split: int | None = None,
-) -> matplotlib.figure.Figure:
+) -> None:
     """Plots the predicted relative contribution of every Binding component.
 
     Args:
@@ -810,7 +822,6 @@ def contribution(
         kernel: The bin for average pooling of Kd-sorted sequences.
         max_split: Maximum number of sequences scored at a time.
     """
-
     _, log_aggregate = score(
         rnd,
         batch,
@@ -828,9 +839,10 @@ def contribution(
         )
     bmd_contributions = torch.cat(bmd_contributions_list, dim=1)
 
-    fig, axs = plt.subplots(
+    fig, ax = plt.subplots(
         2, 1, figsize=(5, 6), gridspec_kw={"height_ratios": (1, 4)}
     )
+    axs = cast(AxesArray, ax)
 
     # Sort
     sorting = torch.argsort(log_aggregate, dim=0, descending=False)
@@ -878,6 +890,3 @@ def contribution(
         title += f" ({len(bin_partition):,} probes)"
     axs[0].set_title(title)
     fig.align_ylabels(axs)
-
-    # Output
-    return fig

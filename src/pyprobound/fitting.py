@@ -6,7 +6,6 @@ import os
 from collections.abc import Callable, Iterable, Iterator, MutableMapping
 from typing import Any, TypeVar
 
-import matplotlib
 import numpy as np
 import scipy
 import torch
@@ -290,7 +289,7 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         kernel: int = 1,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-    ) -> matplotlib.figure.Figure:
+    ) -> None:
         """Plots predicted validation values with error bars and binning."""
         pred, obs = pred.float(), obs.float()
         if kernel > 1:
@@ -409,9 +408,6 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         curr_ax.set_xlabel(xlabel)
         curr_ax.set_ylabel(ylabel)
         curr_ax.legend()
-
-        # Output
-        return fig
 
     def _fit(self, log: bool = False) -> None:
         """Fits experiment-specific parameters to the validation data."""
@@ -600,7 +596,7 @@ class Fit(BaseFit):
         ylog: bool = True,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-    ) -> matplotlib.figure.Figure:
+    ) -> None:
         """Plots predicted validation values with error bars and binning.
 
         Args:
@@ -617,7 +613,7 @@ class Fit(BaseFit):
         err = None
         if lower_err is not None and upper_err is not None:
             err = torch.stack((obs - lower_err, upper_err - obs), dim=0)
-        return self._plot(
+        self._plot(
             obs=obs,
             pred=pred,
             err=err,
@@ -783,7 +779,7 @@ class LogFit(BaseFit):
         ylog: bool = True,
         labels: list[str] | None = None,
         colors: list[str] | None = None,
-    ) -> matplotlib.figure.Figure:
+    ) -> None:
         """Plots predicted validation values with error bars and binning.
 
         Args:
@@ -804,7 +800,7 @@ class LogFit(BaseFit):
             lower_err = lower_err.exp()
             upper_err = upper_err.exp()
             err = torch.stack((obs - lower_err, upper_err - obs), dim=0)
-        return self._plot(
+        self._plot(
             obs=obs,
             pred=pred,
             err=err,
