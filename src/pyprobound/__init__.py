@@ -4,7 +4,7 @@
 
 import torch
 
-__version__ = "1.2.1"
+__version__ = "1.3.1"
 __precision__ = torch.float32
 __all__ = [
     "alphabets",
