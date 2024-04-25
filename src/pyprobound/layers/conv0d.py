@@ -130,7 +130,7 @@ class Conv0d(Layer):
             prev: If used as the first layer, the table that will be passed as
                 an input; otherwise, the layer that precedes it.
             train_posbias: Whether to train a bias for each input length.
-            name: A string used to describe the maxpooling layer.
+            name: A string used to describe the 0d convolution layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")

@@ -81,7 +81,7 @@ class Conv1d(Layer):
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
-            name: A string used to describe the 0d convolution layer.
+            name: A string used to describe the 1d convolution layer.
         """
         super().__init__(
             layer_spec=psam,
@@ -171,7 +171,7 @@ class Conv1d(Layer):
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
-            name: A string used to describe the 0d convolution layer.
+            name: A string used to describe the 1d convolution layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")

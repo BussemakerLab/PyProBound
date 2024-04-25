@@ -23,6 +23,7 @@ from .aggregate import Aggregate, Contribution
 from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
 from .layers import PSAM, Conv0d, Conv1d
+from .mode import Mode
 from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
 from .utils import avg_pool1d
@@ -266,12 +267,24 @@ def logo(
         plt.title(title)
 
 
-def posbias(conv1d: Conv0d | Conv1d) -> None:
+def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
     r"""Plots the position bias profile :math:`\omega(x)`.
 
     Args:
         conv1d: A component containing a position bias profile.
     """
+    if isinstance(conv1d, Mode):
+        indices = [
+            i
+            for i, layer in enumerate(conv1d.layers)
+            if isinstance(layer, Conv1d)
+        ]
+        if len(indices) != 1:
+            raise ValueError(
+                f"Mode {conv1d} does not have exactly 1 Conv1d layers"
+            )
+        conv1d = cast(Conv1d, conv1d.layers[indices[0]])
+
     # Get position bias for each output channel
     out_list = (
         conv1d.get_log_posbias()

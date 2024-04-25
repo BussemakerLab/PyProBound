@@ -6,17 +6,26 @@ Members are explicitly re-exported in pyprobound.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Any, Literal, TypeVar, overload
 
 import torch
 from torch import Tensor
-from typing_extensions import override
+from typing_extensions import Self, override
 
 from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
 from .containers import TModuleList
-from .layers import Layer, LengthManager, ModeKey
+from .layers import (
+    PSAM,
+    Conv0d,
+    Conv1d,
+    Layer,
+    LengthManager,
+    ModeKey,
+    NonSpecific,
+)
+from .table import Table
 from .utils import clear_cache
 
 logger = logging.getLogger(__name__)
@@ -94,6 +103,113 @@ class Mode(Binding, LengthManager):
     def max_input_length(self) -> int:
         """The maximum number of finite elements in an input sequence."""
         return self.layers[0].max_input_length
+
+    @classmethod
+    def from_psam(
+        cls,
+        psam: PSAM,
+        prev: Table[Any] | Layer,
+        train_posbias: bool = False,
+        bias_mode: Literal["channel", "same", "reverse"] = "channel",
+        bias_bin: int = 1,
+        length_specific_bias: bool = True,
+        out_channel_indexing: Sequence[int] | None = None,
+        one_hot: bool = False,
+        unfold: bool = False,
+        normalize: bool = False,
+        train_hill: bool = False,
+        name: str = "",
+    ) -> Self:
+        r"""Creates a new instance from a PSAM and an input component.
+
+        Args:
+            psam: The specification of the 1d convolution layer.
+            prev: If used as the first layer, the table that will be passed as
+                an input; otherwise, the layer that precedes it.
+            train_posbias: Whether to train a bias :math:`\omega(x)` for each
+                output position and channel.
+            bias_mode: Whether to train a separate bias for each output
+                channel, use the same bias across all output channels, or (if
+                `score_reverse`) flip it for the reverse output channels.
+            bias_bin: Applies the constraint
+                :math:`\omega(x_{i\times\text{bias_bin}}) = \cdots
+                = \omega(x_{(i+1)\times\text{bias_bin}-1})`.
+            length_specific_bias: Whether to train a separate bias parameter
+                for each input length.
+            out_channel_indexing: Output channel indexing, equivalent to
+                `Conv1d(seqs)[:,out_channel_indexing]`.
+            one_hot: Whether to use one-hot scoring instead of dense.
+            unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
+            normalize: Whether to mean-center `log_posbias` over all windows.
+            train_hill: Whether to train a Hill coefficient.
+            name: A string used to describe the binding mode.
+        """
+        if isinstance(prev, Layer):
+            input_shape = prev.out_len(prev.input_shape, "shape")
+            min_input_length = prev.out_len(prev.min_input_length, "min")
+            max_input_length = prev.out_len(prev.max_input_length, "max")
+        else:
+            input_shape = prev.input_shape
+            min_input_length = prev.min_read_length
+            max_input_length = prev.max_read_length
+        return cls(
+            [
+                Conv1d(
+                    psam=psam,
+                    input_shape=input_shape,
+                    min_input_length=min_input_length,
+                    max_input_length=max_input_length,
+                    train_posbias=train_posbias,
+                    bias_mode=bias_mode,
+                    bias_bin=bias_bin,
+                    length_specific_bias=length_specific_bias,
+                    out_channel_indexing=out_channel_indexing,
+                    one_hot=one_hot,
+                    unfold=unfold,
+                    normalize=normalize,
+                )
+            ],
+            train_hill=train_hill,
+            name=name,
+        )
+
+    @classmethod
+    def from_nonspecific(
+        cls,
+        nonspecific: NonSpecific,
+        prev: Table[Any] | Layer,
+        train_posbias: bool = False,
+        name: str = "",
+    ) -> Self:
+        """Creates a new instance from a specification and an input component.
+
+        Args:
+            spec: The specification of the 0d convolution layer.
+            prev: If used as the first layer, the table that will be passed as
+                an input; otherwise, the layer that precedes it.
+            train_posbias: Whether to train a bias for each input length.
+            name: A string used to describe the binding mode.
+        """
+        if isinstance(prev, Layer):
+            input_shape = prev.out_len(prev.input_shape, "shape")
+            min_input_length = prev.out_len(prev.min_input_length, "min")
+            max_input_length = prev.out_len(prev.max_input_length, "max")
+        else:
+            input_shape = prev.input_shape
+            min_input_length = prev.min_read_length
+            max_input_length = prev.max_read_length
+        return cls(
+            [
+                Conv0d(
+                    nonspecific=nonspecific,
+                    input_shape=input_shape,
+                    min_input_length=min_input_length,
+                    max_input_length=max_input_length,
+                    train_posbias=train_posbias,
+                )
+            ],
+            name=name,
+        )
 
     @override
     def key(self) -> ModeKey:
