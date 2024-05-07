@@ -247,6 +247,7 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
 
     def __init__(
         self,
+        alphabet: Alphabet,
         left_flank: str = "",
         right_flank: str = "",
         left_flank_length: int = 0,
@@ -255,11 +256,13 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
         r"""Initializes the table.
 
         Args:
-            left_flank (str): The prepended sequence.
-            right_flank (str): The appended sequence.
-            left_flank_length (int): The scored length of the left flank.
-            right_flank_length (int): The scored length of the right flank.
+            alphabet: The alphabet used to encode sequences into tensors.
+            left_flank: The prepended sequence.
+            right_flank: The appended sequence.
+            left_flank_length: The scored length of the left flank.
+            right_flank_length: The scored length of the right flank.
         """
+        self.alphabet = alphabet
         self._left_flank = left_flank
         self._right_flank = right_flank
         self._left_flank_length = 0
@@ -353,10 +356,10 @@ class CountTable(Table[CountBatch]):
             dataframe: The dataframe used to initialize the count table.
             alphabet: The alphabet used to encode sequences into tensors.
             transliterate: A mapping of strings to be replaced before encoding.
-            left_flank (str): The prepended sequence.
-            right_flank (str): The appended sequence.
-            left_flank_length (int): The scored length of the left flank.
-            right_flank_length (int): The scored length of the right flank.
+            left_flank: The prepended sequence.
+            right_flank: The appended sequence.
+            left_flank_length: The scored length of the left flank.
+            right_flank_length: The scored length of the right flank.
             max_left_flank_length: The maximum allowed length of the prepended
                 sequence.
             max_right_flank_length: The maximum allowed length of the appended
@@ -383,7 +386,6 @@ class CountTable(Table[CountBatch]):
                 right_flank = right_flank.replace(pattern, replace)
 
         # Instance attributes
-        self.alphabet = alphabet
         if max_left_flank_length is None:
             max_left_flank_length = len(left_flank)
         if max_right_flank_length is None:
@@ -403,7 +405,7 @@ class CountTable(Table[CountBatch]):
 
         # Store variable lengths
         self.variable_lengths = torch.sum(
-            self.seqs != self.alphabet.neginf_pad, dim=1
+            self.seqs != alphabet.neginf_pad, dim=1
         ).unsqueeze(-1)
         curr_min_variable_length = self.variable_lengths.min().item()
         curr_max_variable_length = self.variable_lengths.max().item()
@@ -434,6 +436,7 @@ class CountTable(Table[CountBatch]):
 
         # Set flank length
         super().__init__(
+            alphabet=alphabet,
             left_flank=left_flank,
             right_flank=right_flank,
             left_flank_length=left_flank_length,
