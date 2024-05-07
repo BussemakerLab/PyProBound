@@ -43,6 +43,7 @@ class PSAM(LayerSpec):
         out_channels: int | None = None,
         in_channels: int | None = None,
         pairwise_distance: int = 0,
+        dilation: int = 1,
         symmetry: Sequence[int] | None = None,
         seed: Sequence[Sequence[str]] | None = None,
         seed_scale: int = 1,
@@ -56,6 +57,7 @@ class PSAM(LayerSpec):
         max_kernel_size: int | None = None,
         frozen_parameters: Set[str] = frozenset(),
         normalize: bool = False,
+        train_bias: bool = False,
         train_betas: bool = True,
         name: str = "",
     ) -> None:
@@ -73,6 +75,7 @@ class PSAM(LayerSpec):
                 if not specified.
             pairwise_distance: The distance between two positions on the PSAM
                 for which pairwise letter features will be scored.
+            dilation: The spacing between kernel elements.
             symmetry: An encoding of reverse-complement and translational
                 symmetries. All positions with the same integer will share
                 parameters, while two positions with opposite signs will
@@ -101,8 +104,9 @@ class PSAM(LayerSpec):
             max_kernel_size: The maximum kernel size allowed.
             frozen_parameters: The name of the parameters in `betas` which will
                 never be trained.
-            normalize: Whether to mean-center the PSAM. A separate `bias`
-                parameter is trained for the convolution in its place.
+            normalize: Whether to mean-center the PSAM.
+            train_bias: Whether to train a bias term. Should be on if
+                `normalize` is True.
             train_betas: Whether to train any PSAM parameters, used to restrict
                 gradient calculation to sequence-independent parameters only.
             name: A string used to describe the PSAM.
@@ -147,10 +151,17 @@ class PSAM(LayerSpec):
             )
         if not 0 <= pairwise_distance < kernel_size:
             raise ValueError("pairwise_distance must be in [0, kernel_size)")
+        if dilation < 1:
+            raise ValueError("dilation must be positive")
+        if dilation > 1 and pairwise_distance > 0:
+            raise ValueError(
+                "Cannot model pairwise interactions with dilation"
+            )
 
         # Store instance attributes
         self.alphabet = alphabet
         self.frozen_parameters = frozen_parameters
+        self._dilation = dilation
         self._n_strands = cast(Literal[1, 2], n_strands)
         self._pairwise_distance = pairwise_distance
         self._score_reverse = score_reverse
@@ -163,6 +174,7 @@ class PSAM(LayerSpec):
         self.information_threshold = information_threshold
         self.max_kernel_size = max_kernel_size
         self.train_betas = train_betas
+        self.train_bias = train_bias
         self.symmetry: Tensor
         self.register_buffer("symmetry", torch.tensor(symmetry))
 
@@ -170,7 +182,8 @@ class PSAM(LayerSpec):
         self.bias = torch.nn.Parameter(
             torch.zeros(
                 (self.out_channels // self.n_strands, 1), dtype=__precision__
-            )
+            ),
+            requires_grad=train_bias,
         )
         self.betas: TParameterDict = TParameterDict()
         self.update_params(pairwise_grad=True)
@@ -181,6 +194,11 @@ class PSAM(LayerSpec):
     def kernel_size(self) -> int:
         """The size of the convolving PSAM kernel."""
         return len(self.symmetry)
+
+    @property
+    def dilation(self) -> int:
+        """The spacing between kernel elements."""
+        return self._dilation
 
     @property
     def n_strands(self) -> Literal[1, 2]:
@@ -202,12 +220,12 @@ class PSAM(LayerSpec):
         self, length: T, mode: Literal["min", "max", "shape"] = "shape"
     ) -> T:
         del mode
-        return length - self.kernel_size + 1
+        return length - self.dilation * (self.kernel_size - 1)
 
     @override
     def in_len(self, length: T, mode: Literal["min", "max"] = "max") -> T:
         del mode
-        return self.kernel_size + length - 1
+        return length + self.dilation * (self.kernel_size - 1)
 
     @staticmethod
     def _get_key(elements: tuple[Tensor, Tensor], index: int) -> str:
@@ -328,7 +346,7 @@ class PSAM(LayerSpec):
     def unfreeze(self, parameter: unfreezable = "all") -> None:
         if self.train_betas:
             if parameter in ("monomer", "pairwise", "all"):
-                if self.normalize:
+                if self.train_bias:
                     self.bias.requires_grad_()
                 for key, param in self.betas.items():
                     pairwise = len(key.split("-")) == 3
@@ -564,10 +582,10 @@ class PSAM(LayerSpec):
         for conv1d in self._layers:
             # pylint: disable=protected-access
             conv1d._update_biases(
-                binding_mode_left=left_shift,
-                binding_mode_right=right_shift,
-                window_top=-left_shift,
-                window_bottom=-right_shift,
+                binding_mode_left=self.dilation * left_shift,
+                binding_mode_right=self.dilation * right_shift,
+                window_top=-self.dilation * left_shift,
+                window_bottom=-self.dilation * right_shift,
             )
 
         # Update symmetry string
@@ -588,8 +606,8 @@ class PSAM(LayerSpec):
             for bmd, layer_idx in conv1d._modes:
                 bmd._update_propagation(
                     layer_idx + 1,
-                    left_shift=-left_shift,
-                    right_shift=-right_shift,
+                    left_shift=-self.dilation * left_shift,
+                    right_shift=-self.dilation * right_shift,
                 )
             # pylint: enable=protected-access
 
@@ -749,7 +767,7 @@ class PSAM(LayerSpec):
                 pairwise_param -= shift2
                 monomer1_param += shift1.reshape(shift1.shape[0], -1)
                 monomer2_param += shift2.reshape(shift2.shape[0], -1)
-                if self.normalize:
+                if self.train_bias:
                     bias_shift += (
                         monomer1_param.mean(-1) + monomer2_param.mean(-1)
                     ).item()

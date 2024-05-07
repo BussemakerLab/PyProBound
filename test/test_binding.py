@@ -305,6 +305,76 @@ class TestMode_3di1_3di1_bin2(TestMode_0):
         initialize_binding(self.binding)
 
 
+class TestMode_3dilate2_3di1_bin2(TestMode_0):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=3,
+                out_channels=2,
+                dilation=2,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            train_posbias=True,
+            unfold=True,
+            bias_bin=2,
+            one_hot=True,
+        )
+        layer2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                kernel_size=3,
+                in_channels=2,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            layer1,
+            train_posbias=True,
+            unfold=True,
+            bias_bin=2,
+            one_hot=True,
+        )
+        self.binding = pyprobound.Mode([layer1, layer2])
+        initialize_binding(self.binding)
+
+
+class TestMode_3dilate3_3di1_bin2(TestMode_0):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table()
+        layer1 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=3,
+                out_channels=2,
+                dilation=3,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            train_posbias=True,
+            unfold=True,
+            bias_bin=2,
+            one_hot=True,
+        )
+        layer2 = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                kernel_size=3,
+                in_channels=2,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            layer1,
+            train_posbias=True,
+            unfold=True,
+            bias_bin=2,
+            one_hot=True,
+        )
+        self.binding = pyprobound.Mode([layer1, layer2])
+        initialize_binding(self.binding)
+
+
 class TestMode_3di1_mp2floor(TestMode_0):
     @override
     def setUp(self) -> None:

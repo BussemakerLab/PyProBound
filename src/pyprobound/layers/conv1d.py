@@ -244,6 +244,7 @@ class Conv1d(Layer):
                 out_channels=self.layer_spec.out_channels,
                 in_channels=self.layer_spec.in_channels,
                 score_reverse=self.layer_spec.score_reverse,
+                dilation=self.layer_spec.dilation,
             ),
             input_shape=self.input_shape,
             min_input_length=self.min_input_length,
@@ -432,7 +433,9 @@ class Conv1d(Layer):
             matrix = matrix[self.out_channel_indexing]
 
         if self.unfold:
-            unfold = current.unfold(2, matrix.shape[2], 1)
+            unfold = current.unfold(
+                2, self.layer_spec.dilation * (matrix.shape[2] - 1) + 1, 1
+            )[..., :: self.layer_spec.dilation]
             result = (unfold.unsqueeze(1) * matrix.unsqueeze(2)).sum(2)
             result = result.sum(3)
         else:
@@ -441,9 +444,12 @@ class Conv1d(Layer):
                 result = F.conv3d(
                     current.unsqueeze(-1).unsqueeze(-1),
                     matrix.unsqueeze(-1).unsqueeze(-1),
+                    dilation=self.layer_spec.dilation,
                 ).squeeze(-1, -2)
             else:
-                result = F.conv1d(current, matrix)
+                result = F.conv1d(
+                    current, matrix, dilation=self.layer_spec.dilation
+                )
 
         for dist in range(1, self.layer_spec.pairwise_distance + 1):
             matrix = self.layer_spec.get_filter(dist)
@@ -522,7 +528,9 @@ class Conv1d(Layer):
         matrix = F.pad(matrix, (0, 0, 0, 1))
 
         # Get sliding windows
-        unfold = seqs.unfold(1, matrix.shape[-1], 1)
+        unfold = seqs.unfold(
+            1, self.layer_spec.dilation * (matrix.shape[-1] - 1) + 1, 1
+        )[..., :: self.layer_spec.dilation]
 
         # Reshape and gather
         unfold_expand = unfold.unsqueeze(1).expand(-1, matrix.shape[0], -1, -1)

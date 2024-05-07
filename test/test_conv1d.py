@@ -164,8 +164,9 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
     def test_shift_footprint(self) -> None:
         del self.count_table[100:]
         shift = self.layer.bias_bin
-        self.layer.log_posbias[..., :shift] = 0
-        self.layer.log_posbias[..., -shift:] = 0
+        score_shift = shift + self.layer.layer_spec.dilation - 1
+        self.layer.log_posbias[..., :score_shift] = 0
+        self.layer.log_posbias[..., -score_shift:] = 0
 
         # increment symmetry left
         prev_score = self.layer(self.count_table.seqs)
@@ -180,7 +181,7 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         self.layer.check_length_consistency()
         self.assertTrue(
             torch.allclose(
-                curr_score[:, 0], prev_score[:, 0, shift:], atol=1e-6
+                curr_score[:, 0], prev_score[:, 0, score_shift:], atol=1e-6
             ),
             "incorrect output after increasing symmetry left",
         )
@@ -212,7 +213,7 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
                 torch.stack(
                     [
                         i[0]
-                        .roll(i[0].isneginf().sum().item())[:-shift]
+                        .roll(i[0].isneginf().sum().item())[:-score_shift]
                         .roll(-i[0].isneginf().sum().item())
                         for i in prev_score
                     ]
@@ -347,6 +348,43 @@ class TestConv1d_4_onehot(TestConv1d_4_dense):
         initialize_conv1d(self.layer)
 
 
+class TestConv1d_4dilate2_onehot(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=0,
+                information_threshold=0.0,
+                dilation=2,
+            ),
+            self.count_table,
+            one_hot=True,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4dilate3(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=0,
+                information_threshold=0.0,
+                dilation=3,
+            ),
+            self.count_table,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
 class TestConv1d_4di1_dense(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
@@ -399,6 +437,24 @@ class TestConv1d_4di1_bin1_dense(TestConv1d_4_dense):
             train_posbias=True,
             bias_bin=1,
             one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4dilate2_bin1_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                dilation=2,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            train_posbias=True,
             normalize=False,
         )
         initialize_conv1d(self.layer)
