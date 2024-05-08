@@ -81,10 +81,7 @@ class RollSpec(LayerSpec):
 
 
 class Roll(Layer):
-    """Layer for changing between left, right, and center padding.
-
-    Assumes left-padded input.
-    """
+    """Layer for changing between left, right, and center padding."""
 
     def __init__(
         self,

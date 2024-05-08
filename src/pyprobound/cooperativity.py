@@ -49,6 +49,7 @@ class Spacing(Spec):
         mode_key_b: ModeKey,
         score_same: bool = True,
         score_reverse: bool = True,
+        score_mode: Literal["both", "positive", "negative"] = "both",
         max_overlap: int | None = None,
         max_spacing: int | None = None,
         normalize: bool = False,
@@ -79,6 +80,7 @@ class Spacing(Spec):
         self._cooperativities: set[Cooperativity] = set()
         self._score_same = score_same
         self._score_reverse = score_reverse
+        self._score_mode = score_mode
 
     @classmethod
     def from_specs(
@@ -87,6 +89,7 @@ class Spacing(Spec):
         specs_b: Iterable[LayerSpec],
         score_same: bool = True,
         score_reverse: bool = True,
+        score_mode: Literal["both", "positive", "negative"] = "both",
         max_overlap: int | None = None,
         max_spacing: int | None = None,
         normalize: bool = False,
@@ -110,6 +113,7 @@ class Spacing(Spec):
             ModeKey(specs_b),
             score_same=score_same,
             score_reverse=score_reverse,
+            score_mode=score_mode,
             max_overlap=max_overlap,
             max_spacing=max_spacing,
             normalize=normalize,
@@ -239,6 +243,17 @@ class Spacing(Spec):
                 torch.arange(
                     self.max_num_windows - size_b + self.max_overlap,
                     self.max_num_windows + size_a - self.max_overlap - 1,
+                ),
+                float("-inf"),
+            )
+        if self._score_mode != "both":
+            midpoint = self.max_num_windows + ((size_a - size_b) // 2)
+            log_spacing = log_spacing.index_fill(
+                -1,
+                (
+                    torch.arange(0, midpoint)
+                    if self._score_mode == "positive"
+                    else torch.arange(midpoint, log_spacing.shape[-1])
                 ),
                 float("-inf"),
             )

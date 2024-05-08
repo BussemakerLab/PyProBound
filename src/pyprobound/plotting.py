@@ -286,7 +286,7 @@ def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
         conv1d = cast(Conv1d, conv1d.layers[indices[0]])
 
     # Get position bias for each output channel
-    out_list = (
+    out_list = list(
         conv1d.get_log_posbias()
         .detach()
         .to(device="cpu", dtype=torch.float32)

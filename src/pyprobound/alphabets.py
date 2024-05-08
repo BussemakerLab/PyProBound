@@ -1,7 +1,7 @@
 """Alphabets for encoding sequences into tensors."""
 
 import itertools
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Mapping
 from typing import cast
 
 import torch
@@ -159,14 +159,12 @@ class Alphabet:
             A dense representation of the sequence as an integer tensor of
             shape :math:`(\text{length},)`.
         """
-
-        def _chunk(seq: str) -> Iterator[str]:
-            """Yield successive n-sized chunks from seq"""
-            for i in range(0, len(seq), self.monomer_length):
-                yield seq[i : i + self.monomer_length]
-
         return torch.tensor(
-            [self.get_index[char] for char in _chunk(sequence)],
+            [
+                self.get_index[char]
+                for i in range(0, len(sequence), self.monomer_length)
+                for char in sequence[i : i + self.monomer_length]
+            ],
             dtype=torch.int64,
         )
 
