@@ -112,6 +112,18 @@ class LayerSpec(Spec, LengthManager):
         return iter(())
 
 
+class EmptyLayerSpec(LayerSpec):
+    """LayerSpec that does not require any configuration."""
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self))
+
+    @override
+    def __hash__(self) -> int:
+        return hash(type(self))
+
+
 class Layer(Transform, LengthManager):
     """Experiment-specific LayerSpec container.
 

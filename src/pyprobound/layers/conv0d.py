@@ -20,12 +20,12 @@ from .. import __precision__
 from ..alphabets import Alphabet
 from ..base import BindingOptim, Call, Step
 from ..table import Table
-from .layer import Layer, LayerSpec
+from .layer import EmptyLayerSpec, Layer
 
 T = TypeVar("T", int, Tensor)
 
 
-class NonSpecific(LayerSpec):
+class NonSpecific(EmptyLayerSpec):
     """Non-specific factor, equivalent to a PSAM with all betas equal."""
 
     def __init__(self, alphabet: Alphabet, name: str = "") -> None:
