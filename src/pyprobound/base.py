@@ -174,7 +174,7 @@ class Component(torch.nn.Module, abc.ABC):
 
     @override
     def __str__(self) -> str:
-        return f"{self.name}{self.__class__.__name__}"
+        return f"{self.name}{type(self).__name__}"
 
     @override
     def __repr__(self) -> str:

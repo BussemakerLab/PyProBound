@@ -663,5 +663,4 @@ class MultitaskLoader(Generic[T]):  # pylint: disable=too-few-public-methods
             else:
                 loaders.append(MultitaskLoader._cycle(loader))
 
-        for batch in zip(*loaders):
-            yield batch
+        yield from zip(*loaders)

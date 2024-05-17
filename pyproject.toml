@@ -54,6 +54,7 @@ enable_error_code = [
 
 [tool.pylint.main]
 jobs = 0
+ignored-modules = "torch.nn.functional"
 
 [tool.pylint.basic]
 variable-rgx = "^[a-z][a-zA-Z0-9_]*$"
@@ -67,6 +68,7 @@ disable = [
     "cyclic-import",
     "duplicate-code",
     "import-error",
+    "too-many-ancestors",
     "too-many-arguments",
     "too-many-branches",
     "too-many-instance-attributes",

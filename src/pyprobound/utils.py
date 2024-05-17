@@ -4,6 +4,7 @@ from typing import overload
 
 import torch
 import torch.mps
+import torch.nn.functional as F
 from torch import Tensor
 
 
@@ -71,7 +72,7 @@ def logsigmoid(tensor: Tensor, /, threshold: int = 20) -> Tensor:
     .. math::
         \log \frac{1}{1 + e^{-x}}
     """
-    return -torch.nn.functional.softplus(-tensor, threshold=threshold)
+    return -F.softplus(-tensor, threshold=threshold)
 
 
 def betaln(z_1: Tensor, z_2: Tensor) -> Tensor:
@@ -91,18 +92,10 @@ def avg_pool1d(tensor: Tensor, kernel: int = 1) -> Tensor:
     if dims == 0:
         raise ValueError("No dimensions to pool over")
     if dims == 1:
-        return torch.nn.functional.avg_pool1d(
-            tensor.unsqueeze(0).unsqueeze(0), kernel
-        ).flatten()
+        return F.avg_pool1d(tensor.unsqueeze(0).unsqueeze(0), kernel).flatten()
     if dims == 2:
-        return (
-            torch.nn.functional.avg_pool1d(tensor.T.unsqueeze(1), kernel)
-            .squeeze(1)
-            .T
-        )
-    return torch.nn.functional.avg_pool1d(
-        tensor.transpose(0, -1), kernel
-    ).transpose(0, -1)
+        return F.avg_pool1d(tensor.T.unsqueeze(1), kernel).squeeze(1).T
+    return F.avg_pool1d(tensor.transpose(0, -1), kernel).transpose(0, -1)
 
 
 def get_split_size(

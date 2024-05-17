@@ -130,7 +130,12 @@ class Conv1d(Layer):
         self.train_posbias = train_posbias
         self.log_posbias = torch.nn.Parameter(
             torch.zeros(
-                size=(n_lengths, bias_channels, n_windows), dtype=__precision__
+                size=(
+                    n_lengths,
+                    bias_channels,  # pylint: disable=possibly-used-before-assignment
+                    n_windows,
+                ),
+                dtype=__precision__,
             ),
             requires_grad=train_posbias,
         )

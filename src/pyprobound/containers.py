@@ -26,6 +26,7 @@ from . import __version__
 ModuleT = TypeVar("ModuleT", bound=torch.nn.Module)
 
 
+# pylint: disable-next=abstract-method
 class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
     """Typed ModuleList.
 
@@ -57,7 +58,7 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
     @override
     def __getitem__(self, index: int | slice) -> ModuleT | Self:
         if isinstance(index, slice):
-            return self.__class__(list(self._modules.values())[index])
+            return type(self)(list(self._modules.values())[index])
         return self._modules[self._get_abs_string_index(index)]
 
     @overload
@@ -124,6 +125,7 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
         return torch.nn.Module.__hash__(self)
 
 
+# pylint: disable-next=abstract-method
 class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
     """Typed ParameterList.
 
@@ -159,7 +161,7 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
     @override
     def __getitem__(self, index: int | slice) -> Parameter | Self:
         if isinstance(index, slice):
-            return self.__class__(list(self._parameters.values())[index])
+            return type(self)(list(self._parameters.values())[index])
         return self._parameters[self._get_abs_string_index(index)]
 
     @overload
@@ -237,6 +239,7 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
         return torch.nn.Module.__hash__(self)
 
 
+# pylint: disable-next=abstract-method
 class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
     """Typed ParameterDict.
 
