@@ -311,23 +311,24 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
             torch.allclose(prev_score, curr_score, atol=1e-6),
             "incorrect output after fixing gauge",
         )
-        for dist in range(1, self.layer.layer_spec.pairwise_distance + 1):
+        for dist in range(self.layer.layer_spec.pairwise_distance + 1):
             for channel in self.layer.layer_spec.get_filter(dist):
-                for pos in channel.transpose(0, -1):
+                for pos in channel.unbind(-1):
                     mean_0 = pos.mean(dim=0)
-                    mean_1 = pos.mean(dim=1)
                     self.assertTrue(
                         torch.allclose(
-                            mean_0, torch.zeros(len(mean_0)), atol=1e-6
+                            mean_0, torch.zeros_like(mean_0), atol=1e-6
                         ),
-                        "gauge fixing did not zero out average of di dim=0",
+                        f"gauge fixing did not zero out dist={dist} dim=0",
                     )
-                    self.assertTrue(
-                        torch.allclose(
-                            mean_1, torch.zeros(len(mean_1)), atol=1e-6
-                        ),
-                        "gauge fixing did not zero out average of di dim=1",
-                    )
+                    if pos.ndim > 1:
+                        mean_1 = pos.mean(dim=1)
+                        self.assertTrue(
+                            torch.allclose(
+                                mean_1, torch.zeros_like(mean_1), atol=1e-6
+                            ),
+                            f"gauge fixing did not zero out dist={dist} dim=1",
+                        )
 
 
 class TestConv1d_4_onehot(TestConv1d_4_dense):

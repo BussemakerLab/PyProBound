@@ -718,28 +718,31 @@ class PSAM(LayerSpec):
 
     def fix_gauge(self) -> None:
         """Removes invariances between monomer and pairwise parameters."""
-        bias_shift = 0.0
-        for dist in range(1, self.pairwise_distance + 1):
+        bias_shift = torch.zeros_like(self.bias)
+        for dist in range(self.pairwise_distance, -1, -1):
             for i in range(self.kernel_size - dist):
                 feat1, feat2 = self.symmetry[i], self.symmetry[i + dist]
 
-                pairwise_params = [
-                    self.betas[self._get_key((feat1, feat2), j)]
-                    for j in range(
-                        (self.out_channels // self.n_strands)
-                        * self.in_channels**2
+                # Get pairwise parameters
+                if dist > 0:
+                    pairwise_params = [
+                        self.betas[self._get_key((feat1, feat2), j)]
+                        for j in range(
+                            (self.out_channels // self.n_strands)
+                            * self.in_channels**2
+                        )
+                    ]
+                    pairwise_param = torch.stack(
+                        cast(list[Tensor], pairwise_params)
+                    ).view(
+                        (
+                            self.out_channels // self.n_strands,
+                            self.in_channels,
+                            self.in_channels,
+                        )
                     )
-                ]
-                pairwise_param = torch.stack(
-                    cast(list[Tensor], pairwise_params)
-                ).view(
-                    (
-                        self.out_channels // self.n_strands,
-                        self.in_channels,
-                        self.in_channels,
-                    )
-                )
 
+                # Get monomer parameters
                 monomer1_params = [
                     self.betas[self._get_key((feat1, feat1), j)]
                     for j in range(
@@ -761,32 +764,35 @@ class PSAM(LayerSpec):
                     cast(list[Tensor], monomer2_params)
                 ).view((self.out_channels // self.n_strands, self.in_channels))
 
-                shift1 = pairwise_param.mean(dim=2, keepdim=True)
-                pairwise_param -= shift1
-                shift2 = pairwise_param.mean(dim=1, keepdim=True)
-                pairwise_param -= shift2
-                monomer1_param += shift1.reshape(shift1.shape[0], -1)
-                monomer2_param += shift2.reshape(shift2.shape[0], -1)
-                if self.train_bias:
-                    bias_shift += (
-                        monomer1_param.mean(-1) + monomer2_param.mean(-1)
-                    ).item()
-                    monomer1_param -= monomer1_param.mean(-1)
-                    monomer2_param -= monomer2_param.mean(-1)
+                # Mean-center pairwise parameters
+                if dist > 0:
+                    shift1 = pairwise_param.mean(dim=2, keepdim=True)
+                    pairwise_param -= shift1
+                    shift2 = pairwise_param.mean(dim=1, keepdim=True)
+                    pairwise_param -= shift2
+                    monomer1_param += shift1.reshape(shift1.shape[0], -1)
+                    monomer2_param += shift2.reshape(shift2.shape[0], -1)
 
-                for param, val in zip(
-                    pairwise_params + monomer1_params + monomer2_params,
-                    torch.cat(
-                        [
-                            i.flatten()
-                            for i in (
-                                pairwise_param,
-                                monomer1_param,
-                                monomer2_param,
-                            )
-                        ]
-                    ),
-                ):
+                # Mean-center monomer parameters
+                if dist == 0:
+                    shift1 = monomer1_param.mean(-1, keepdim=True)
+                    shift2 = monomer2_param.mean(-1, keepdim=True)
+                    bias_shift += shift1 + shift2
+                    monomer1_param -= shift1
+                    monomer2_param -= shift2
+
+                # Update parameter values
+                params = monomer1_params + monomer2_params
+                values = torch.cat(
+                    [monomer1_param.flatten(), monomer2_param.flatten()]
+                )
+                if dist > 0:
+                    params += pairwise_params
+                    values = torch.cat([values, pairwise_param.flatten()])
+                for param, val in zip(params, values):
                     torch.nn.init.constant_(param, val)
 
+        # Update bias
+        if self.score_reverse:
+            bias_shift /= 2
         self.bias.data = self.bias + bias_shift
