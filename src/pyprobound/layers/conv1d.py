@@ -444,17 +444,13 @@ class Conv1d(Layer):
             result = (unfold.unsqueeze(1) * matrix.unsqueeze(2)).sum(2)
             result = result.sum(3)
         else:
-            if current.device.type == "cpu":
-                # https://github.com/pytorch/pytorch/issues/104284
-                result = F.conv3d(
-                    current.unsqueeze(-1).unsqueeze(-1),
-                    matrix.unsqueeze(-1).unsqueeze(-1),
-                    dilation=self.layer_spec.dilation,
-                ).squeeze(-1, -2)
-            else:
-                result = F.conv1d(
-                    current, matrix, dilation=self.layer_spec.dilation
-                )
+            # https://github.com/pytorch/pytorch/issues/104284
+            # https://github.com/pytorch/pytorch/issues/96225
+            result = F.conv3d(
+                current.unsqueeze(-1).unsqueeze(-1),
+                matrix.unsqueeze(-1).unsqueeze(-1),
+                dilation=self.layer_spec.dilation,
+            ).squeeze(-1, -2)
 
         for dist in range(1, self.layer_spec.pairwise_distance + 1):
             matrix = self.layer_spec.get_filter(dist)
@@ -483,14 +479,12 @@ class Conv1d(Layer):
                 temp = (unfold.unsqueeze(1) * matrix.unsqueeze(2)).sum(2)
                 result += temp.sum(3)
             else:
-                if current.device.type == "cpu":
-                    # https://github.com/pytorch/pytorch/issues/104284
-                    result += F.conv3d(
-                        current_pairs.unsqueeze(-1).unsqueeze(-1),
-                        matrix.unsqueeze(-1).unsqueeze(-1),
-                    ).squeeze(-1, -2)
-                else:
-                    result += F.conv1d(current_pairs, matrix)
+                # https://github.com/pytorch/pytorch/issues/104284
+                # https://github.com/pytorch/pytorch/issues/96225
+                result += F.conv3d(
+                    current_pairs.unsqueeze(-1).unsqueeze(-1),
+                    matrix.unsqueeze(-1).unsqueeze(-1),
+                ).squeeze(-1, -2)
 
         if posbias is not None:
             result += posbias

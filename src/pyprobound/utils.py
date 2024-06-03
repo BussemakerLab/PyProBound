@@ -103,9 +103,6 @@ def get_split_size(
 ) -> int:
     """Calculates the minibatch needed to avoid GPU limits on tensor sizes.
 
-    See https://github.com/pytorch/pytorch/issues/96225.
-    See https://github.com/pytorch/pytorch/issues/96716.
-
     Args:
         max_embedding_size: The maximum number of bytes needed to encode a
             sequence.
@@ -116,7 +113,7 @@ def get_split_size(
     if isinstance(device, torch.device):
         device = device.type
     if device == "mps":
-        return min(max_split, 65_535, (2**31 // max_embedding_size) - 1)
+        return min(max_split, 65_535, 2**27 // max_embedding_size)
     return max_split
 
 
