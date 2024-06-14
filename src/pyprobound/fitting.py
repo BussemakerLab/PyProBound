@@ -635,8 +635,8 @@ class LogFit(BaseFit):
     r"""Curve fitting to independent validation data in logarithmic space.
 
     .. math::
-        \log \text{observation} (y) \sim \log \left(
-            \exp \left( m + \text{prediction} (\log Z) \right) + \exp(b)
+        \log \left( \text{observation} (y) \right) \sim \log \left(
+        \exp(m) \times \exp \left( \text{prediction} (\log Z) \right) + \exp(b)
         \right)
 
     Attributes:

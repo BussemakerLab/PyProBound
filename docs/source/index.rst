@@ -3,8 +3,24 @@ PyProBound
 
 Implementation of ProBound [#Rube2022]_ in PyTorch.
 
+ProBound is a method for learning free-energy parameters from enrichment-based assays.
+While initially developed to learn relative affinities of TF-DNA binding from SELEX experiments,
+it can also be configured to learn absolute binding affinities,
+applied to `in-vivo` assays such as ChIP-seq or CUT&Tag,
+and extended to profile the sequence-dependent kinetics of enzymes.
+
+An overview of ProBound and PyProBound is provided in the :doc:`User Guide <UserGuide>`.
+
 .. toctree::
    :hidden:
+   :maxdepth: 3
+
+   UserGuide
+
+.. toctree::
+   :caption: Examples
+   :hidden:
+   :titlesonly:
 
    CTCF
    CTCF_multiexp
@@ -15,30 +31,25 @@ Implementation of ProBound [#Rube2022]_ in PyTorch.
    Src
    Src_earlystop
 
-Examples
---------
-- :doc:`CTCF: Single Experiment <_notebooks/CTCF>`
-- :doc:`CTCF: Multiple Experiments <_notebooks/CTCF_multiexp>`
-- :doc:`UbxExdHth: Binding Cooperativity <_notebooks/UbxExdHth>`
-- :doc:`CEBPγ: EpiSELEX-seq <_notebooks/CEBPg>`
-- :doc:`Dll: Kd-seq <_notebooks/Dll>`
-- :doc:`GR: ChIP-seq <_notebooks/GR>`
-- :doc:`Src: Kinase-seq <_notebooks/Src>`
-- :doc:`Src: Kinase-seq with Early Stopping <_notebooks/Src_earlystop>`
+.. toctree::
+   :caption: API
+   :hidden:
 
-Overview
---------
-.. image:: _static/PyProBound.svg
-  :alt: PyProBound class diagram
+   Overview
+   _autosummary/pyprobound
 
-API
----
-.. autosummary::
-   :toctree: _autosummary
-   :template: module.rst
-   :recursive:
+Installation
+------------
+The PyPI package `pyProBound <https://pypi.org/project/pyprobound/>`_
+is a Python wrapper for ProBoundTools, from the original Java implementation of ProBound.
+The PyPI package is not maintained by the Bussemaker Lab.
 
-   pyprobound
+To install the PyProBound package described in this documentation,
+download directly from the `repository <https://github.com/BussemakerLab/PyProBound>`_ with
+
+.. code-block::
+
+   pip install git+https://github.com/BussemakerLab/PyProBound.git
 
 Reference
 ----------

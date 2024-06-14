@@ -3,8 +3,4 @@ CTCF: Single Experiment
 
 .. toctree::
 
-   CTCF_notebook
-
-.. toctree::
-
-   CTCF_output
+   _notebooks/CTCF

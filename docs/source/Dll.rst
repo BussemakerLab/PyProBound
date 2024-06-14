@@ -3,8 +3,4 @@ Dll: Kd-seq
 
 .. toctree::
 
-   Dll_notebook
-
-.. toctree::
-
-   Dll_output
+   _notebooks/Dll

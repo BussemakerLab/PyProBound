@@ -20,18 +20,16 @@ def make_count_table(
     left_flank: str = "ACGTACGT",
     right_flank: str = "ACGTACGT",
 ) -> pyprobound.CountTable:
+    letters = alphabet.alphabet + ("*",)
     seqs = [
         "".join(
             random.choices(
-                alphabet.alphabet + ("*",),
-                k=random.randint(min_input_length, max_input_length),
+                letters, k=random.randint(min_input_length, max_input_length)
             )
         )
         for _ in range(n_seqs)
     ]
-
     df = pd.DataFrame(index=seqs, data=np.ones(shape=(len(seqs), n_columns)))
-
     return pyprobound.CountTable(
         dataframe=df,
         alphabet=alphabet,

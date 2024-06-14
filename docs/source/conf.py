@@ -29,6 +29,7 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.autosummary",
     "sphinx_rtd_theme",
+    "sphinx_autodoc_typehints",
     "myst_nb",
 ]
 
