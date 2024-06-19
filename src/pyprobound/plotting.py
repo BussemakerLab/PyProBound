@@ -3,7 +3,6 @@
 import copy
 import math
 import warnings
-from collections.abc import Collection
 from typing import Any, TypeAlias, cast
 
 import logomaker
@@ -26,7 +25,7 @@ from .layers import PSAM, Conv0d, Conv1d
 from .mode import Mode
 from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
-from .utils import avg_pool1d
+from .utils import avg_pool1d, count_kmers
 
 if "Arial" in matplotlib.font_manager.findfont("Arial"):
     matplotlib.rcParams["font.sans-serif"] = "Arial"
@@ -38,54 +37,6 @@ cmap = matplotlib.colormaps["bwr"].copy()
 cmap.set_bad(color="gray")
 
 AxesArray: TypeAlias = NDArray[Any]
-
-
-def count_kmers(sequences: Collection[str], kmer_length: int = 3) -> Tensor:
-    """Returns a sparse count matrix of k-mers in a list of sequences.
-
-    Args:
-        sequences: The sequences to count the k-mers in.
-        kmer_length: The k-mer length to be counted.
-
-    Returns:
-        A Sparse CSC tensor of the count of each k-mer in each sequence.
-    """
-    vocabulary: dict[str, int] = {}
-    data: list[int] = []
-    indices: list[int] = []
-    indptr: list[int] = [0]
-    for seq in sequences:
-        count: dict[int, int] = {}
-        for view in range(0, len(seq) - kmer_length + 1):
-            kmer = seq[view : view + kmer_length]
-
-            # Get key from vocabulary
-            if kmer not in vocabulary:
-                key = len(vocabulary)
-                vocabulary[kmer] = key
-            else:
-                key = vocabulary[kmer]
-
-            # Running sum of kmers in sequence
-            if key not in count:
-                count[key] = 1
-            else:
-                count[key] += 1
-
-        # Add to csc initializers
-        indptr.append(indptr[-1] + len(count))
-        data.extend(count.values())
-        indices.extend(count.keys())
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return torch.sparse_csc_tensor(
-            indptr,
-            indices,
-            data,
-            size=(len(vocabulary), len(sequences)),
-            dtype=torch.float32,
-        )
 
 
 def logomaker_plotter(
