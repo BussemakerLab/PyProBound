@@ -1,11 +1,11 @@
 """Typed helper functions."""
 
-import warnings
 from typing import Hashable, Iterable, Sequence, overload
 
 import torch
 import torch.mps
 import torch.nn.functional as F
+from scipy.sparse import csc_array
 from torch import Tensor
 
 
@@ -142,18 +142,24 @@ def clear_cache() -> None:
 
 
 def count_kmers(
-    sequences: Iterable[Sequence[Hashable]], kmer_length: int = 3
-) -> Tensor:
+    sequences: Iterable[Sequence[Hashable]],
+    kmer_length: int = 3,
+    vocabulary: dict[Sequence[Hashable], int] | None = None,
+) -> tuple[csc_array, dict[Sequence[Hashable], int]]:
     """Returns a sparse count matrix of k-mers in a list of sequences.
 
     Args:
         sequences: The sequences to count the k-mers in.
         kmer_length: The k-mer length to be counted.
+        vocabulary: Mapping of k-mers to indices.
 
     Returns:
-        A Sparse CSC tensor of the count of each k-mer in each sequence.
+        A tuple (matrix, vocabulary), where matrix is a sparse CSC matrix of
+        the count of each k-mer in each sequence, and vocabulary is the mapping
+        of k-mers to their respective indices in the matrix.
     """
-    vocabulary: dict[Sequence[Hashable], int] = {}
+    if vocabulary is None:
+        vocabulary = {}
     data: list[int] = []
     indices: list[int] = []
     indptr: list[int] = [0]
@@ -182,12 +188,7 @@ def count_kmers(
         data.extend(count.values())
         indices.extend(count.keys())
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return torch.sparse_csc_tensor(
-            indptr,
-            indices,
-            data,
-            size=(len(vocabulary), num_seqs),
-            dtype=torch.float32,
-        )
+    sparse = csc_array(
+        (data, indices, indptr), shape=(len(vocabulary), num_seqs)
+    )
+    return sparse, vocabulary

@@ -557,9 +557,9 @@ def kmer_enrichment(
         max_split: Maximum number of sequences scored at a time.
     """
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)
-    kmer_counts = count_kmers(batch.seqs, kmer_length=kmer_length)
-    counts_obs = kmer_counts @ counts_obs
-    counts_pred = kmer_counts @ torch.exp(counts_pred)
+    kmer_counts, _ = count_kmers(batch.seqs, kmer_length=kmer_length)
+    counts_obs = torch.tensor(kmer_counts @ counts_obs)
+    counts_pred = torch.tensor(kmer_counts @ torch.exp(counts_pred))
     if columns is None:
         columns = list(range(counts_obs.shape[1]))
     fig, ax = plt.subplots(figsize=(5, 5))
