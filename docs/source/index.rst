@@ -36,7 +36,13 @@ An overview of ProBound and PyProBound is provided in the :doc:`User Guide <User
    :hidden:
 
    Overview
-   _autosummary/pyprobound
+
+.. autosummary::
+   :toctree: _autosummary
+   :template: module.rst
+   :recursive:
+
+   pyprobound
 
 Installation
 ------------

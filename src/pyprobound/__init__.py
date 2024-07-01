@@ -28,7 +28,6 @@ __all__ = [
     "MultiExperimentLoss",
     "Optimizer",
     "CountBatch",
-    "CountBatchTuple",
     "CountTable",
     "EvenSampler",
     "MultitaskLoader",
@@ -51,7 +50,6 @@ from .mode import Mode
 from .optimizer import Optimizer
 from .table import (
     CountBatch,
-    CountBatchTuple,
     CountTable,
     EvenSampler,
     MultitaskLoader,

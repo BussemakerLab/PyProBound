@@ -54,21 +54,6 @@ class CountBatch(Protocol):  # pylint: disable=too-few-public-methods
     target: Tensor
 
 
-class CountBatchTuple(NamedTuple):
-    r"""A NamedTuple for a set of rows from a count table.
-
-    Attributes:
-        seqs: A sequence tensor of shape
-            :math:`(\text{minibatch},\text{length})` or
-            :math:`(\text{minibatch},\text{in_channels},\text{length})`.
-        target: A count tensor of shape
-            :math:`(\text{minibatch},\text{rounds})`.
-    """
-
-    seqs: Tensor
-    target: Tensor
-
-
 def score(
     module: Transform,
     batch: CountBatch,
@@ -124,8 +109,8 @@ def get_dataframe(
     """Loads tab-delimited count tables into columns on a Pandas dataframe.
 
     The input count tables are assumed to have a sequence field and a series
-    of count fields, all separated by a tab character. The first line is
-    automatically skipped if it does not contain a tab character.
+    of count fields, all separated by a tab character.
+    Any initial lines lacking a tab character are skipped.
 
     Args:
         paths: The paths to each count table to be merged into a dataframe.
@@ -149,8 +134,9 @@ def get_dataframe(
     for idx, path in enumerate(paths):
         open_fn = gzip.open if os.path.splitext(path)[-1] == ".gz" else open
         with open_fn(path, "rt", encoding="utf-8") as file_handle:  # type: ignore[operator]
-            first_line = file_handle.readline()
-            skiprows = 0 if "\t" in first_line else 1
+            skiprows = 0
+            while "\t" not in file_handle.readline():
+                skiprows += 1
 
         df = pd.read_csv(
             path, header=None, index_col=0, sep="\t", skiprows=skiprows
@@ -334,6 +320,12 @@ class CountTable(Table[CountBatch]):
         counts_per_round (Tensor): The number of probes in each round of the
             count table, as a count tensor of shape :math:`(\text{rounds})`.
     """
+
+    class _CountBatchTuple(NamedTuple):
+        """A NamedTuple for a CountBatch"""
+
+        seqs: Tensor
+        target: Tensor
 
     def __init__(
         self,
@@ -598,7 +590,7 @@ class CountTable(Table[CountBatch]):
     @override
     def __getitem__(self, idx: int) -> CountBatch:
         return cast(
-            CountBatch, CountBatchTuple(self.seqs[idx], self.target[idx])
+            CountBatch, self._CountBatchTuple(self.seqs[idx], self.target[idx])
         )
 
     @override
