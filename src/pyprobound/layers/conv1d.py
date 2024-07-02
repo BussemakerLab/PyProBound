@@ -407,17 +407,33 @@ class Conv1d(Layer):
             )
         return log_posbias
 
-    def score_onehot(
-        self, seqs: Tensor, posbias: Tensor | None = None
-    ) -> Tensor:
+    def _get_log_posbias_indexed(self, seqs: Tensor) -> Tensor | None:
+        r"""The bias :math:`\omega(x)` for each sequence.
+
+        Args:
+            seqs: A sequence tensor of shape
+                :math:`(\text{minibatch},\text{length})` or
+                :math:`(\text{minibatch},\text{in_channels},\text{in_length})`.
+
+        Returns:
+            A tensor with the bias for each sequence of shape
+            :math:`(\text{input_lengths},\text{out_channels},
+            \text{out_length})`, or None if not being trained.
+        """
+        if self.log_posbias.requires_grad or torch.any(self.log_posbias != 0):
+            posbias = self.get_log_posbias()
+            if self.length_specific_bias:
+                return posbias[self.lengths(seqs)]
+            return posbias
+        return None
+
+    def score_onehot(self, seqs: Tensor) -> Tensor:
         r"""Calculates the log score of each window using convolutions.
 
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
                 :math:`(\text{minibatch},\text{in_channels},\text{in_length})`.
-            posbias: An optional posbias tensor of shape :math:`(
-                \text{input_lengths},\text{out_channels},\text{out_length})`.
 
         Returns:
             A tensor with the log score of each window of shape
@@ -486,6 +502,8 @@ class Conv1d(Layer):
                     matrix.unsqueeze(-1).unsqueeze(-1),
                 ).squeeze(-1, -2)
 
+        # Add in posbias
+        posbias = self._get_log_posbias_indexed(seqs)
         if posbias is not None:
             result += posbias
 
@@ -500,16 +518,12 @@ class Conv1d(Layer):
             + bias
         )
 
-    def score_dense(
-        self, seqs: Tensor, posbias: Tensor | None = None
-    ) -> Tensor:
+    def score_dense(self, seqs: Tensor) -> Tensor:
         r"""Calculates the log score of each window using indexing.
 
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})`.
-            posbias: An optional posbias tensor of shape :math:`(
-                \text{input_lengths},\text{out_channels},\text{out_length})`.
 
         Returns:
             A tensor with the log score of each window of shape
@@ -578,6 +592,7 @@ class Conv1d(Layer):
             out += gather.sum(-1)
 
         # Add in posbias
+        posbias = self._get_log_posbias_indexed(seqs)
         if posbias is not None:
             out += posbias
 
@@ -630,14 +645,7 @@ class Conv1d(Layer):
                     "Input requires embedding, but one_hot not enabled"
                 )
 
-        # Get posbias
-        posbias = None
-        if self.log_posbias.requires_grad or torch.any(self.log_posbias != 0):
-            posbias = self.get_log_posbias()
-            if self.length_specific_bias:
-                posbias = posbias[self.lengths(seqs)]
-
         # Score
         if self.one_hot or seqs.ndim == 3 or requires_embedding:
-            return self.score_onehot(seqs, posbias)
-        return self.score_dense(seqs, posbias)
+            return self.score_onehot(seqs)
+        return self.score_dense(seqs)
