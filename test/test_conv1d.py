@@ -106,43 +106,32 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_forward_v_reverse(self) -> None:
-        self.layer.layer_spec._score_reverse = True
-        self.layer.log_posbias.requires_grad_(False)
-        self.layer.log_posbias.zero_()
+        if self.layer.bias_mode == "same" or self.layer.bias_bin != 1:
+            self.layer.layer_spec._score_reverse = True
+            self.layer.log_posbias.requires_grad_(False)
+            self.layer.log_posbias.zero_()
+        else:
+            self.layer.layer_spec._score_reverse = True
+            self.layer._bias_mode = "reverse"
+            self.layer.log_posbias = torch.nn.Parameter(
+                self.layer.log_posbias[
+                    :, : self.layer.layer_spec.out_channels // 2
+                ]
+            )
 
-        rev_seqs = torch.stack(
-            [
-                torch.roll(
-                    torch.flip(
-                        len(self.count_table.alphabet.alphabet) - 1 - i,
-                        dims=(0,),
-                    ),
-                    shifts=-(i == self.count_table.alphabet.neginf_pad)
-                    .sum()
-                    .item(),
-                )
-                for i in self.count_table.seqs
-            ]
+        rev_seqs = (
+            len(self.count_table.alphabet.alphabet) - 1 - self.count_table.seqs
         )
-        rev_seqs[rev_seqs < 0] = (
-            len(self.count_table.alphabet.alphabet)
-            - rev_seqs[rev_seqs < 0]
-            - 1
-        )
+        rev_seqs[rev_seqs < 0] = self.count_table.seqs[rev_seqs < 0]
+        rev_seqs = rev_seqs.flip(1)
 
         forward_out = self.layer(self.count_table.seqs)
-        reverse_out = self.layer(rev_seqs)
-        flipped_reverse_out = torch.stack(
-            [
-                torch.roll(i.flip(0, 1), -i[0].isneginf().sum().item())
-                for i in reverse_out
-            ]
-        )
+        reverse_out = self.layer(rev_seqs).flip(-1, -2)
 
         self.check_nans(forward_out)
-        self.check_nans(flipped_reverse_out)
+        self.check_nans(reverse_out)
         self.assertTrue(
-            torch.allclose(forward_out, flipped_reverse_out, atol=1e-6),
+            torch.allclose(forward_out, reverse_out, atol=1e-6),
             "forward and reverse outputs do not match",
         )
 

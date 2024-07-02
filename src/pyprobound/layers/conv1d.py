@@ -400,7 +400,9 @@ class Conv1d(Layer):
                 ..., : self.out_len(self.input_shape)
             ]
         if self.bias_mode == "reverse":
-            log_posbias = torch.cat((log_posbias, log_posbias.flip(-1)), dim=1)
+            log_posbias = torch.cat(
+                (log_posbias, log_posbias.flip(-1, -2)), dim=1
+            )
         if self.length_specific_bias:
             log_posbias = F.pad(
                 log_posbias, (0, 0, 0, 0, self.min_input_length, 0)
