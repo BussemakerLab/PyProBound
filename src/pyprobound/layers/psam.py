@@ -582,8 +582,8 @@ class PSAM(LayerSpec):
         for conv1d in self._layers:
             # pylint: disable=protected-access
             conv1d._update_biases(
-                binding_mode_left=self.dilation * left_shift,
-                binding_mode_right=self.dilation * right_shift,
+                binding_mode_left=left_shift,
+                binding_mode_right=right_shift,
                 window_top=-self.dilation * left_shift,
                 window_bottom=-self.dilation * right_shift,
             )
