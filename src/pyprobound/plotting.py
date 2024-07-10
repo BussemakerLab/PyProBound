@@ -457,11 +457,16 @@ def enrichment_plotter(
         # Calculate enrichment
         x_pred = ((cols_pred[:, 1] + eps) / (cols_pred[:, 0] + eps)).float()
         y_obs = ((cols_obs[:, 1] + eps) / (cols_obs[:, 0] + eps)).float()
-        fold_split = f"{(y_obs.max() / y_obs.min()).item():.2e}".split("e+")
-        fold_range = (
-            rf"$\mathdefault{{{fold_split[0]}"
-            rf"\times10^{{{fold_split[1].lstrip('0')}}}}}$"
-        )
+        fold_split = f"{(y_obs.max() / y_obs.min()).item():.2e}".split("e")
+        coefficient = fold_split[0]
+        power = fold_split[1]
+        if power.startswith("-"):
+            power = "-" + fold_split[1].lstrip("-0")
+        else:
+            power = fold_split[1].lstrip("+0")
+        if len(power) == 0:
+            power = "0"
+        fold_range = rf"$\mathdefault{{{coefficient}\times10^{{{power}}}}}$"
 
         # Plot and print statistics
         spearman = scipy.stats.spearmanr(x_pred, y_obs).statistic

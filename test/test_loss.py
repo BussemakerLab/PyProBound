@@ -42,11 +42,12 @@ class TestDll(unittest.TestCase):
             pairwise_distance=9,
             normalize=False,
         )
-        conv0d = pyprobound.layers.Conv0d.from_nonspecific(
-            nonspecific, self.count_tables[0]
-        )
-        conv1d = pyprobound.layers.Conv1d.from_psam(psam, self.count_tables[0])
-        binding_modes = [pyprobound.Mode([conv0d]), pyprobound.Mode([conv1d])]
+        binding_modes = [
+            pyprobound.Mode.from_nonspecific(
+                nonspecific, self.count_tables[0]
+            ),
+            pyprobound.Mode.from_psam(psam, self.count_tables[0]),
+        ]
         i_round = pyprobound.rounds.InitialRound()
         b_round = pyprobound.rounds.BoundRound.from_binding(
             binding_modes,
@@ -122,7 +123,7 @@ class TestDll(unittest.TestCase):
         self.assertAlmostEqual(
             nll,
             java_nll,
-            places=6,
+            places=7,
             msg=f"Calculated NLL {nll} does not match reference {java_nll}",
         )
         self.assertAlmostEqual(

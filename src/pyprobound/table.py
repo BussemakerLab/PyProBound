@@ -573,7 +573,10 @@ class CountTable(Table[CountBatch]):
             inv_idx = ~idx
         else:
             unique, counts = torch.unique(
-                torch.cat((idx, torch.arange(0, len(self))), dim=0)
+                torch.cat(
+                    (idx.reshape(-1), torch.arange(0, len(self))), dim=0
+                ),
+                return_counts=True,
             )
             inv_idx = cast(Tensor, unique[counts == 1])
         self.seqs = self.seqs[inv_idx].contiguous()
