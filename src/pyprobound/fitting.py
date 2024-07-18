@@ -18,7 +18,7 @@ from . import __precision__
 from .aggregate import Aggregate
 from .base import Spec
 from .cooperativity import Cooperativity
-from .layers import Conv1d
+from .layers import Layer
 from .loss import Loss, LossModule
 from .mode import Mode
 from .optimizer import Optimizer
@@ -116,12 +116,6 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         for mod in self.round.modules():
             if isinstance(mod, Mode):
                 mod.train_hill = train_hill
-                for layer in mod.layers:
-                    if isinstance(layer, Conv1d):
-                        layer.train_posbias = False
-
-                        if update_construct:
-                            layer.log_posbias.zero_()
 
                 if update_construct:
                     mod.update_read_length(
@@ -141,12 +135,17 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
                     for diag in mod.log_posbias:
                         diag.zero_()
 
+            elif isinstance(mod, Layer):
+                if update_construct:
+                    for parameter in mod.parameters(recurse=False):
+                        parameter.zero_()
+
         self.round.check_length_consistency()
 
-        # Unfreeze experiment-specific parameters only
+        # Unfreeze all parameters that aren't in a Layer
         self.round.unfreeze("all")
         for mod in self.round.modules():
-            if isinstance(mod, Spec):
+            if isinstance(mod, Spec) or isinstance(mod, Layer):
                 mod.freeze()
 
         # Set up optimizer
@@ -444,12 +443,12 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         self.load_state_dict(best_state_dict)
         self.optimizer.save(self.checkpoint)
 
+        # Unfreeze experiment-specific parameters
         if self.train_posbias:
             for mod in self.round.modules():
-                if isinstance(mod, Mode):
-                    for layer in mod.layers:
-                        if getattr(layer, "train_posbias", False):
-                            layer.log_posbias.requires_grad_()
+                if isinstance(mod, Layer):
+                    for parameter in mod.parameters(recurse=False):
+                        parameter.requires_grad_()
                 elif isinstance(mod, Cooperativity):
                     if mod.train_posbias:
                         mod.log_posbias.requires_grad_()

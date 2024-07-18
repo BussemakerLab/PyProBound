@@ -495,13 +495,15 @@ class CountTable(Table[CountBatch]):
         old_left_flank = self.left_flank[
             len(self.left_flank) - self._left_flank_length :
         ]
-        left_flank = self.left_flank.rjust(left, "*")[
-            len(self.left_flank) - left :
-        ]
+        left_flank = self.left_flank.rjust(
+            left, "*" if self.wildcard_padded else " "
+        )[len(self.left_flank) - left :]
         old_left_flank_tr = self.alphabet.translate(old_left_flank)
         left_flank_tr = self.alphabet.translate(left_flank)
         old_right_flank = self.right_flank[: self._right_flank_length]
-        right_flank = self.right_flank.ljust(right, "*")[:right]
+        right_flank = self.right_flank.ljust(
+            right, "*" if self.wildcard_padded else " "
+        )[:right]
         right_flank_tr = self.alphabet.translate(right_flank)
         old_right_flank_tr = self.alphabet.translate(old_right_flank)
 

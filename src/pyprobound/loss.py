@@ -78,7 +78,7 @@ class MultiExperimentLoss(LossModule[CountBatch]):
         pseudocount: float = 0,
         exponential_bound: float = 40,
         full_loss: bool = False,
-        exclude_regularization: Iterable[str] = frozenset(),
+        exclude_regularization: Iterable[str] = tuple(),
         equalize_contribution: bool = False,
         max_split: int | None = None,
     ) -> None:
@@ -101,7 +101,7 @@ class MultiExperimentLoss(LossModule[CountBatch]):
 
         # Store loss attributes
         self.experiments: TModuleList[Experiment] = TModuleList(experiments)
-        self.exclude_regularization = exclude_regularization
+        self.exclude_regularization = tuple(exclude_regularization)
         self.full_loss = full_loss
         self.equalize_contribution = equalize_contribution
         self.lambda_l2 = lambda_l2
