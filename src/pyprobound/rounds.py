@@ -14,7 +14,7 @@ from typing_extensions import Self, override
 from . import __precision__
 from .aggregate import Aggregate
 from .base import Binding, BindingOptim, Call, Component, Spec, Transform
-from .utils import log1mexp, logsigmoid
+from .utils import log1mexp
 
 
 class BaseRound(Transform, abc.ABC):
@@ -329,7 +329,7 @@ class BoundRound(Round):
 
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
-        return logsigmoid(self.log_aggregate(seqs))
+        return F.logsigmoid(self.log_aggregate(seqs))
 
 
 class BoundUnsaturatedRound(Round):
@@ -402,8 +402,8 @@ class RhoGammaRound(Round):
         reference_round (BaseRound): The previous round for cumulative
             enrichment.
         log_depth (Tensor): The sequencing depth :math:`\eta` in log space.
-        log_rho (Tensor): The parameter :math:`\rho` in log space.
-        log_gamma (Tensor): The parameter :math:`\gamma` in log space.
+        rho (Tensor): The parameter :math:`\rho`.
+        gamma (Tensor): The parameter :math:`\gamma`.
     """
 
     unfreezable = Literal[Round.unfreezable, "rho"]
@@ -415,8 +415,8 @@ class RhoGammaRound(Round):
         train_depth: bool = True,
         log_depth: float = 0,
         library_concentration: float = -1,
-        log_rho: float = 0,
-        log_gamma: float = -1,
+        rho: float = 0,
+        gamma: float = -1,
         name: str = "",
     ) -> None:
         r"""Initializes the round.
@@ -428,8 +428,8 @@ class RhoGammaRound(Round):
             log_depth: The initial value of `log_depth`.
             library_concentration: The total library concentration, used for
                 estimating the free protein concentration.
-            log_rho: The initial value of `log_rho`.
-            log_gamma: The initial value of `log_gamma`.
+            rho: The initial value of `rho`.
+            gamma: The initial value of `gamma`.
             name: A string used to describe the round.
         """
         super().__init__(
@@ -440,11 +440,9 @@ class RhoGammaRound(Round):
             library_concentration=library_concentration,
             name=name,
         )
-        self.log_rho = torch.nn.Parameter(
-            torch.tensor(log_rho, dtype=__precision__)
-        )
-        self.log_gamma = torch.nn.Parameter(
-            torch.tensor(log_gamma, dtype=__precision__)
+        self.rho = torch.nn.Parameter(torch.tensor(rho, dtype=__precision__))
+        self.gamma = torch.nn.Parameter(
+            torch.tensor(gamma, dtype=__precision__)
         )
 
     @override
@@ -460,8 +458,8 @@ class RhoGammaRound(Round):
         library_concentration: float = -1,
         activity_heuristic: float = 0.05,
         name: str = "",
-        log_rho: float = 1,
-        log_gamma: float = -1,
+        rho: float = 1,
+        gamma: float = -1,
     ) -> Self:
         r"""Creates a new instance from binding components and reference round.
 
@@ -478,8 +476,8 @@ class RhoGammaRound(Round):
             activity_heuristic: The fraction of the total aggregate that the
                 contribution will be set to when it is first optimized.
             name: A string used to describe the round.
-            log_rho: The initial value of `log_rho`.
-            log_gamma: The initial value of `log_gamma`.
+            rho: The initial value of `rho`.
+            gamma: The initial value of `gamma`.
         """
         return cls(
             Aggregate.from_binding(
@@ -492,25 +490,23 @@ class RhoGammaRound(Round):
             train_depth=train_depth,
             log_depth=log_depth,
             library_concentration=library_concentration,
-            log_rho=log_rho,
-            log_gamma=log_gamma,
+            rho=rho,
+            gamma=gamma,
             name=name,
         )
 
     @override
     def unfreeze(self, parameter: unfreezable = "all") -> None:
         if parameter in ("rho", "all"):
-            self.log_rho.requires_grad_()
-            self.log_gamma.requires_grad_()
+            self.rho.requires_grad_()
+            self.gamma.requires_grad_()
         if parameter != "rho":
             super().unfreeze(parameter)
 
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
         log_agg = self.log_aggregate(seqs)
-        return torch.exp(self.log_rho) * log_agg + torch.exp(
-            self.log_gamma
-        ) * F.logsigmoid(-log_agg)
+        return self.rho * log_agg - self.gamma * F.logsigmoid(-log_agg)
 
 
 class ExponentialRound(Round):
@@ -664,7 +660,7 @@ class ExponentialRound(Round):
         aggregate = torch.exp(self.log_aggregate(seqs))
         if not torch.isneginf(self.delta):
             return torch.logaddexp(
-                logsigmoid(self.delta) - aggregate,
-                logsigmoid(-self.delta) + log1mexp(aggregate),
+                F.logsigmoid(self.delta) - aggregate,
+                F.logsigmoid(-self.delta) + log1mexp(aggregate),
             )
         return log1mexp(aggregate)
