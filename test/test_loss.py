@@ -1,5 +1,4 @@
 # pylint: disable=missing-class-docstring, missing-function-docstring, missing-module-docstring
-import json
 import math
 import unittest
 
@@ -9,128 +8,376 @@ import torch
 from typing_extensions import override
 
 import pyprobound
+import pyprobound.external
 
 
-class TestDll(unittest.TestCase):
+class TestSingleTF(unittest.TestCase):
+
     @override
     def setUp(self) -> None:
-        # read in table
-        dataframe = pd.read_csv(
-            "http://pbdemo.x3dna.org/files/example_data/"
-            "KD-single/countTable.0.20201205_DlldN-12.tsv.gz",
-            header=None,
-            index_col=0,
-            sep="\t",
-        )
-        alphabet = pyprobound.alphabets.DNA()
-        self.count_tables = [
-            pyprobound.CountTable(
-                dataframe,
-                alphabet,
-                left_flank="GAGTTCTACAGTCCGACCTGG",
-                right_flank="CCAGGACTCGGACCTGGA",
-                left_flank_length=6,
-                right_flank_length=6,
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/singleTF/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/singleTF/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/singleTF/countTable.0.CTCF_r3.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
             )
         ]
-
-        # specify model
-        nonspecific = pyprobound.layers.NonSpecific(alphabet=alphabet)
-        psam = pyprobound.layers.PSAM(
-            kernel_size=10,
-            alphabet=alphabet,
-            pairwise_distance=9,
-            normalize=False,
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
         )
-        binding_modes = [
-            pyprobound.Mode.from_nonspecific(
-                nonspecific, self.count_tables[0]
-            ),
-            pyprobound.Mode.from_psam(psam, self.count_tables[0]),
-        ]
-        i_round = pyprobound.rounds.InitialRound()
-        b_round = pyprobound.rounds.BoundRound.from_binding(
-            binding_modes,
-            i_round,
-            target_concentration=100,
-            library_concentration=20,
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
         )
-        f_round = pyprobound.rounds.UnboundRound.from_round(b_round)
-        experiment = pyprobound.Experiment(
-            [i_round, b_round, f_round],
-            counts_per_round=self.count_tables[0].counts_per_round,
-        )
-        self.model = pyprobound.MultiExperimentLoss(
-            [experiment],
-            lambda_l2=1e-6,
-            pseudocount=200,
-            exponential_bound=40,
-            full_loss=False,
-        )
-
-        # read in parameters
-        self.json = json.loads(
-            requests.get(
-                "http://pbdemo.x3dna.org/files/example_output/"
-                "KD-single/fit.final.json",
-                timeout=5,
-            ).text
-        )
-
-        # fill in log_depth
-        for rnd, log_depth in zip(
-            experiment.rounds,
-            self.json["coefficients"]["countTable"][0]["h"],
-            strict=True,
-        ):
-            torch.nn.init.constant_(rnd.log_depth, log_depth)
-
-        # fill in log_activity
-        torch.nn.init.constant_(
-            b_round.aggregate.contributions[0].log_activity,
-            self.json["coefficients"]["bindingModes"][0]["activity"][0][0]
-            - math.log(self.count_tables[0].input_shape),
-        )
-        torch.nn.init.constant_(
-            b_round.aggregate.contributions[1].log_activity,
-            self.json["coefficients"]["bindingModes"][1]["activity"][0][0],
-        )
-
-        # fill in betas
-        mono = self.json["coefficients"]["bindingModes"][1]["mononucleotide"]
-        di = self.json["coefficients"]["bindingModes"][1]["dinucleotide"]
-        alphalen = len(alphabet.alphabet)
-        for key, param in psam.betas.items():
-            elements = [int(i) for i in key.split("-")]
-            elements = [i - 1 for i in elements[:-1]] + elements[-1:]
-            if len(elements) == 2:
-                torch.nn.init.constant_(
-                    param, mono[elements[0] * alphalen + elements[1]]
-                )
-            else:
-                torch.nn.init.constant_(
-                    param,
-                    di[elements[1] - elements[0] - 1][
-                        elements[0] * (alphalen**2) + elements[2]
-                    ],
-                )
 
     def test_loss(self) -> None:
         with torch.inference_mode():
             nll, reg = [i.item() for i in self.model(self.count_tables)]
-        java_reg = self.json["metadata"]["regularization"]
-        java_nll = self.json["metadata"]["logLikelihoodPerRead"] - java_reg
-        self.assertAlmostEqual(
-            nll,
-            java_nll,
-            places=7,
+        java_reg = self.fit_final["metadata"]["regularization"]
+        java_nll = (
+            self.fit_final["metadata"]["logLikelihoodPerRead"] - java_reg
+        )
+        self.assertTrue(
+            math.isclose(nll, java_nll, rel_tol=1e-6),
             msg=f"Calculated NLL {nll} does not match reference {java_nll}",
         )
-        self.assertAlmostEqual(
-            reg,
-            java_reg,
-            places=3,
+        self.assertTrue(
+            math.isclose(reg, java_reg, rel_tol=1e-6),
             msg=f"Calculated Reg {reg} does not match reference {java_reg}",
+        )
+
+
+class TestMultiTF(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/multiTF/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/multiTF/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/multiTF/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in ("0.CTCF_r3", "0.CTCF_ESAJ_TAGCGA20NGCT")
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestHthExdUbx(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/hthExdUbx/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/hthExdUbx/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/hthExdUbx/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.UbxIVa-Hth-Exd.30mer1",
+                "1.UbxIVa-Exd.16mer1_rep1",
+                "2.UbxIVa.16mer1_rep1",
+                "3.Exd",
+                "4.Hth.16mer2_rep1",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestEpiSELEX(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/epiSELEX/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/epiSELEX/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/epiSELEX/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.run_11_10_15__R1_ATF4_HOMODIMER_80nM_flank_PCR__None",
+                "1.run_11_10_15__R1_ATF4_HOMODIMER_80nM_flank_PCR__5mCG",
+                "2.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__None",
+                "3.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__5mCG",
+                "4.run_10_05_17__R1_ATF4-CEBPg_50nM_highBand__None",
+                "5.run_10_05_17__R1_ATF4-CEBPg_50nM_highBand__5mCG",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestMultiEpiSELEX(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/multiEpiSELEX/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/multiEpiSELEX/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/multiEpiSELEX/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__None",
+                "1.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__5mCG",
+                "2.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__5hmC",
+                "3.run_06_05_17__R1_CEBPg_homo_75nM_lowBand__6mA",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestKdSingle(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/KD-single/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/KD-single/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/KD-single/countTable.0.20201205_DlldN-12.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestKdMulti(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/KD-multi/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/KD-multi/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/KD-multi/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.20201205_DlldN-9",
+                "1.20201205_DlldN-10",
+                "2.20201205_DlldN-11",
+                "3.20201205_DlldN-12",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestRBP(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/RBP/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/RBP/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/RBP/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.RBFOX2-1nM",
+                "1.RBFOX2-4nM",
+                "2.RBFOX2-14nM",
+                "3.RBFOX2-40nM",
+                "4.RBFOX2-121nM",
+                "5.RBFOX2-365nM",
+                "6.RBFOX2-1100nM",
+                "7.RBFOX2-3300nM",
+                "8.RBFOX2-9800nM",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestChIPSingle(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/ChIP-single/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/ChIP-single/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/ChIP-single/"
+                "countTable.0.IMR90_GR_chip-seq_rep1.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestChIPMulti(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/ChIP-multi/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/ChIP-multi/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/ChIP-multi/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in ("0.GR_30", "1.GR_300", "2.GR_3000")
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
+        )
+
+
+class TestKinase(TestSingleTF):
+
+    @override
+    def setUp(self) -> None:
+        output_root = "http://pbdemo.x3dna.org/files/example_output"
+        data_root = "http://pbdemo.x3dna.org/files/example_data"
+        self.fit_final = requests.get(
+            f"{output_root}/Kinase/fit.final.json", timeout=5
+        ).json()
+        self.config = requests.get(
+            f"{output_root}/Kinase/config.json", timeout=5
+        ).json()
+        dataframes = [
+            pd.read_csv(
+                f"{data_root}/Kinase/countTable.{fname}.tsv.gz",
+                header=None,
+                index_col=0,
+                sep="\t",
+            )
+            for fname in (
+                "0.200205_Src-Kinase_5m",
+                "1.200205_Src-Kinase_20m",
+                "2.200205_Src-Kinase_60m",
+            )
+        ]
+        self.count_tables = pyprobound.external.parse_probound_tables(
+            self.fit_final, dataframes
+        )
+        self.model = pyprobound.external.parse_probound_model(
+            self.fit_final, self.config, self.count_tables
         )
 
 

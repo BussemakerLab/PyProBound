@@ -64,7 +64,7 @@ class Alphabet:
             color_scheme: Passed to Logomaker.Logo.
         """
         # Store attributes
-        self.alphabet = tuple(alphabet)
+        self.alphabet = tuple(list(dict.fromkeys(alphabet)))  # Remove dupes
         self.complement = complement
         self.color_scheme = color_scheme
         self.monomer_length = monomer_length
@@ -103,6 +103,8 @@ class Alphabet:
             else:
                 self.get_index[code] = len(self.get_index)
                 self.get_inv_encoding[encoded] = code
+        self.wildcard_pad = self.get_index["*" * self.monomer_length]
+        self.zero_pad = self.get_index["-" * self.monomer_length]
 
         # Create embedding matrix
         embedding_list: list[Tensor] = []

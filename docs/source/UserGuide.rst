@@ -299,7 +299,7 @@ into a :doc:`Cooperativity <_autosummary/pyprobound.cooperativity.Cooperativity>
 
 .. code-block:: python
 
-    spacing =  pyprobound.Spacing.from_specs([psam_A], [psam_B])
+    spacing =  pyprobound.Spacing([psam_A], [psam_B])
     cooperativity = pyprobound.Cooperativity(spacing, mode_A, modes_B)
 
 The Cooperativity object can then be used just like a Mode object.

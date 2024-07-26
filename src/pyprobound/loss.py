@@ -5,7 +5,7 @@ Members are explicitly re-exported in pyprobound.
 
 import abc
 from collections.abc import Iterable, Iterator
-from typing import Generic, NamedTuple, TypeVar, cast
+from typing import Generic, Literal, NamedTuple, TypeVar, cast
 
 import torch
 from torch import Tensor
@@ -78,6 +78,7 @@ class MultiExperimentLoss(LossModule[CountBatch]):
         pseudocount: float = 0,
         exponential_bound: float = 40,
         full_loss: bool = False,
+        dilute_regularization: bool = False,
         exclude_regularization: Iterable[str] = tuple(),
         equalize_contribution: bool = False,
         max_split: int | None = None,
@@ -91,6 +92,8 @@ class MultiExperimentLoss(LossModule[CountBatch]):
             lambda_l1: L1 regularization hyperparameter.
             pseudocount: Scaling factor for Dirichlet-inspired regularization.
             full_loss: Whether to compute the constant terms of the NLL.
+            dilute_regularization: Whether to keep hyperparameters fixed as the
+                number of experiments increases.
             exclude_regularization: Keywords used to exclude parameters from
                 regularization.
             equalize_contribution: Whether to update the weights so that the
@@ -101,6 +104,7 @@ class MultiExperimentLoss(LossModule[CountBatch]):
 
         # Store loss attributes
         self.experiments: TModuleList[Experiment] = TModuleList(experiments)
+        self.dilute_regularization = dilute_regularization
         self.exclude_regularization = tuple(exclude_regularization)
         self.full_loss = full_loss
         self.equalize_contribution = equalize_contribution
@@ -222,27 +226,27 @@ class MultiExperimentLoss(LossModule[CountBatch]):
 
         return "\n".join(out)
 
-    def regularization(self, experiment: Experiment) -> Tensor:
+    def regularization(self, experiment: Experiment | None = None) -> Tensor:
         """Calculates parameter regularization.
 
         Args:
             experiment: The experiment containing parameters to be regularized.
+                None defaults to dilution over all parameters.
 
         Returns:
             The regularization value as a scalar tensor.
         """
 
         # Get flattened parameter vector
-        param_vec = torch.cat(
-            [
-                param.flatten()
-                for name, param in experiment.named_parameters()
-                if (torch.all(torch.isfinite(param)))
-                and not any(
-                    exclude in name for exclude in self.exclude_regularization
-                )
-            ]
-        )
+        param_list = []
+        model = self if experiment is None else experiment
+        for name, param in model.named_parameters():
+            if torch.any(torch.isneginf(param)):
+                continue
+            if any(exclude in name for exclude in self.exclude_regularization):
+                continue
+            param_list.append(param.flatten())
+        param_vec = torch.cat(param_list)
         regularization = torch.tensor(0.0, device=param_vec.device)
 
         # L2 regularization
@@ -253,23 +257,30 @@ class MultiExperimentLoss(LossModule[CountBatch]):
         if self.lambda_l1 > 0:
             regularization += self.lambda_l1 * param_vec.abs().sum()
 
-        # Dirichlet regularization
-        if self.pseudocount > 0:
-            log_pdf = torch.tensor(0.0, device=param_vec.device)
-            for module in self.modules():
-                if isinstance(module, PSAM):
-                    log_pdf += module.get_dirichlet()
-
-            regularization -= log_pdf * (
-                self.pseudocount / sum(experiment.counts_per_round)
-            )
-
         # Exponential barrier
         if self.exponential_bound != float("inf"):
             regularization += torch.sum(
                 torch.exp(param_vec - self.exponential_bound)
                 + torch.exp(-param_vec - self.exponential_bound)
             )
+
+        # Dirichlet regularization
+        if self.pseudocount > 0:
+            # Get normalization value
+            if experiment is None:
+                norm = sum(
+                    self.pseudocount / sum(expt.counts_per_round)
+                    for expt in self.experiments
+                ) / len(self.experiments)
+            else:
+                norm = self.pseudocount / sum(experiment.counts_per_round)
+
+            # Calculate PDF
+            log_pdf = torch.tensor(0.0, device=param_vec.device)
+            for module in self.modules():
+                if isinstance(module, PSAM):
+                    log_pdf += module.get_dirichlet()
+            regularization -= log_pdf * norm
 
         return regularization
 
@@ -286,8 +297,6 @@ class MultiExperimentLoss(LossModule[CountBatch]):
         """
 
         neglogliks: list[Tensor] = []
-        regularizations: list[Tensor] = []
-
         try:
             # Calculate loss for each experiment
             for expt, sample in zip(self.experiments, batch, strict=True):
@@ -326,7 +335,6 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                     sum_counts += torch.sum(target)
 
                 neglogliks.append(curr_nll / sum_counts)
-                regularizations.append(self.regularization(expt))
 
         except ValueError as e:
             if str(e).startswith("zip"):
@@ -347,9 +355,15 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                     for weight, loss in zip(weights, neglogliks)
                 ]
 
+        # Get regularization
+        if self.dilute_regularization:
+            regularization: Tensor | Literal[0] = self.regularization()
+        else:
+            regularization = sum(
+                norm * self.regularization(expt)
+                for norm, expt in zip(weights, self.experiments)
+            )
+
         # Multiply losses by weights
         negloglik = sum(norm * nll for norm, nll in zip(weights, neglogliks))
-        regularization = sum(
-            norm * reg for norm, reg in zip(weights, regularizations)
-        )
         return Loss(cast(Tensor, negloglik), cast(Tensor, regularization))

@@ -4,7 +4,7 @@
 
 import torch
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 __precision__ = torch.float32
 __all__ = [
     "alphabets",
@@ -38,7 +38,7 @@ __all__ = [
     "score",
 ]
 # not re-exported from pyprobound: alphabets, layers, rounds
-# must be imported separately: containers, plotting, fitting, utils
+# must be imported separately: containers, external, fitting, plotting, utils
 
 from . import alphabets, layers, rounds
 from .aggregate import Aggregate, Contribution

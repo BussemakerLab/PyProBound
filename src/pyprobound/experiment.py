@@ -38,7 +38,8 @@ class Experiment(Transform):
             rounds: The sequenced rounds modeled by the experiment.
             counts_per_round: A tensor with the number of probes in each round
                 of the count table used for training, with shape
-                :math:`(\text{rounds},)`. Should be provided for Kd-seq.
+                :math:`(\text{rounds},)`. Should be provided for Kd-seq or
+                pseudocount > 0.
             name: A string used to describe the experiment.
         """
 

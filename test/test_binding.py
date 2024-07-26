@@ -22,16 +22,10 @@ class TestMode_0(unittest.TestCase):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.binding = pyprobound.Mode(
-            [
-                pyprobound.layers.Conv0d.from_nonspecific(
-                    pyprobound.layers.NonSpecific(
-                        alphabet=self.count_table.alphabet
-                    ),
-                    self.count_table,
-                    train_posbias=True,
-                )
-            ]
+        self.binding = pyprobound.Mode.from_nonspecific(
+            pyprobound.layers.NonSpecific(alphabet=self.count_table.alphabet),
+            self.count_table,
+            train_posbias=True,
         )
         initialize_binding(self.binding)
 
@@ -250,22 +244,18 @@ class TestMode_4di1_bin2(TestMode_0):
     @override
     def setUp(self) -> None:
         self.count_table = make_count_table()
-        self.binding = pyprobound.Mode(
-            [
-                pyprobound.layers.Conv1d.from_psam(
-                    pyprobound.layers.PSAM(
-                        alphabet=self.count_table.alphabet,
-                        kernel_size=4,
-                        pairwise_distance=1,
-                        information_threshold=0.0,
-                    ),
-                    self.count_table,
-                    train_posbias=True,
-                    unfold=True,
-                    bias_bin=2,
-                    one_hot=False,
-                )
-            ]
+        self.binding = pyprobound.Mode.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            train_posbias=True,
+            unfold=True,
+            bias_bin=2,
+            one_hot=False,
         )
         initialize_binding(self.binding)
 

@@ -145,7 +145,7 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         # Unfreeze all parameters that aren't in a Layer
         self.round.unfreeze("all")
         for mod in self.round.modules():
-            if isinstance(mod, Spec) or isinstance(mod, Layer):
+            if isinstance(mod, (Layer, Spec)):
                 mod.freeze()
 
         # Set up optimizer

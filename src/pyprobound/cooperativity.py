@@ -12,12 +12,12 @@ from typing import Literal, cast
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing_extensions import Self, override
+from typing_extensions import override
 
 from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
 from .containers import TParameterList
-from .layers import LayerSpec, ModeKey
+from .layers import LayerSpec, ModeKey, PadSpec
 from .mode import Mode
 from .utils import ceil_div
 
@@ -45,14 +45,15 @@ class Spacing(Spec):
 
     def __init__(
         self,
-        mode_key_a: ModeKey,
-        mode_key_b: ModeKey,
+        mode_key_a: Iterable[LayerSpec],
+        mode_key_b: Iterable[LayerSpec],
         score_same: bool = True,
         score_reverse: bool = True,
         score_mode: Literal["both", "positive", "negative"] = "both",
         max_overlap: int | None = None,
         max_spacing: int | None = None,
         normalize: bool = False,
+        ignore_pad: bool = False,
         name: str = "",
     ) -> None:
         r"""Initializes the experiment-independent dimer cooperativity.
@@ -62,15 +63,20 @@ class Spacing(Spec):
                 contributing to the dimer.
             mode_key_b: The specification of the second binding mode
                 contributing to the dimer.
+            score_same: Whether to score when both modes on the same strand.
+            score_reverse: Whether to score when modes are on opposite strands.
+            score_mode: Whether to score positive offsets (mode_b to the right
+                of mode_a), negative offsets (mode_a to the right), or both.
             max_overlap: The maximum number of bases shared by two windows.
             max_spacing: The maximum number of bases apart two windows can be.
             normalize: Whether to mean-center `log_spacing` over all windows.
+            ignore_pad: Whether to ignore padding layers in calculating sizes.
             name: A string used to describe the cooperativity.
         """
         super().__init__(name=name)
 
-        self.mode_key_a = mode_key_a
-        self.mode_key_b = mode_key_b
+        self.mode_key_a = ModeKey(mode_key_a)
+        self.mode_key_b = ModeKey(mode_key_b)
         self.log_spacing = torch.nn.Parameter(
             torch.zeros(size=(self.n_strands, 1), dtype=__precision__)
         )
@@ -78,47 +84,10 @@ class Spacing(Spec):
         self.max_spacing = max_spacing
         self.normalize = normalize
         self._cooperativities: set[Cooperativity] = set()
-        self._score_same = score_same
-        self._score_reverse = score_reverse
-        self._score_mode = score_mode
-
-    @classmethod
-    def from_specs(
-        cls,
-        specs_a: Iterable[LayerSpec],
-        specs_b: Iterable[LayerSpec],
-        score_same: bool = True,
-        score_reverse: bool = True,
-        score_mode: Literal["both", "positive", "negative"] = "both",
-        max_overlap: int | None = None,
-        max_spacing: int | None = None,
-        normalize: bool = False,
-        name: str = "",
-    ) -> Self:
-        r"""Creates a new the experiment-independent dimer cooperativity.
-
-        Args:
-            specs_a: The specifications of the first binding mode
-                contributing to the dimer.
-            specs_b: The specification of the second binding mode
-                contributing to the dimer.
-            max_overlap: The maximum number of bases shared by two windows.
-            max_spacing: The maximum number of bases apart two windows can be.
-            normalize: Whether to mean-center `log_spacing` over all
-                windows.
-            name: A string used to describe the cooperativity.
-        """
-        return cls(
-            ModeKey(specs_a),
-            ModeKey(specs_b),
-            score_same=score_same,
-            score_reverse=score_reverse,
-            score_mode=score_mode,
-            max_overlap=max_overlap,
-            max_spacing=max_spacing,
-            normalize=normalize,
-            name=name,
-        )
+        self.score_same = score_same
+        self.score_reverse = score_reverse
+        self.score_mode = score_mode
+        self.ignore_pad = ignore_pad
 
     @property
     def n_strands(self) -> Literal[1, 2]:
@@ -190,19 +159,103 @@ class Spacing(Spec):
             requires_grad=self.log_spacing.requires_grad,
         )
 
+    def _update_overlap(
+        self,
+        log_spacing: Tensor,
+        size_a: int,
+        size_b: int,
+        adjust: int,
+        n_windows_a: int,
+        n_windows_b: int,
+    ) -> Tensor:
+        """Adjust for max_overlap & max_spacing, called by get_log_spacing."""
+        # overlap(offset) = min(
+        #   min(size_a, size_b),
+        #   size_a - offset if offset > 0 else size_b + offset
+        # )
+        # spacing = -overlap(offset)
+
+        # max_spacing
+        if self.max_spacing is not None:
+            start = self.max_num_windows + self.max_spacing + size_a + adjust
+            end = log_spacing.shape[-1]
+            if end > start:
+                log_spacing = log_spacing.index_fill(  # positive offsets
+                    -1, torch.arange(start, end), float("-inf")
+                )
+            start = 0
+            end = self.max_num_windows - self.max_spacing - size_b + adjust - 1
+            if end > start:
+                log_spacing = log_spacing.index_fill(  # negative offsets
+                    -1, torch.arange(start, end), float("-inf")
+                )
+
+        # max_overlap
+        if self.max_overlap is not None and self.max_overlap < min(
+            size_a, size_b
+        ):
+            log_spacing = log_spacing.index_fill(
+                -1,
+                torch.arange(
+                    self.max_num_windows - size_b + adjust + self.max_overlap,
+                    self.max_num_windows
+                    + size_a
+                    + adjust
+                    - self.max_overlap
+                    - 1,
+                ),
+                float("-inf"),
+            )
+
+        # Shift to the right index
+        shift_left = self.max_num_windows - n_windows_a
+        shift_right = n_windows_b - self.max_num_windows
+        if shift_right == 0:
+            log_spacing = log_spacing[..., shift_left:]
+        else:
+            log_spacing = log_spacing[..., shift_left:shift_right]
+
+        assert log_spacing.shape[-2:] == (
+            self.n_strands,
+            n_windows_a + n_windows_b - 1,
+        )
+
+        return log_spacing
+
     def get_log_spacing(self, n_windows_a: int, n_windows_b: int) -> Tensor:
         r"""Adjusts log_spacing for windows, max_spacing, and max_overlap.
 
         Args:
             n_windows_a: The number of windows in the first binding mode.
             n_windows_b: The number of windows in the second binding mode.
+            strand_b: The strand index of the second binding mode
 
         Returns:
             A tensor with the flattened representation of the cooperativity
             of each pair of windows :math:`(x^a_m, x^b_n)`, of shape
-            :math:`(\text{out_channels},
+            :math:`(\text{n_strands}_a,\text{n_strands}_b,
             \text{out_length}_a+\text{out_length}_b-1)`.
         """
+        # Get padding
+        pad_a_left = sum(
+            l.left for l in self.mode_key_a if isinstance(l, PadSpec)
+        )
+        pad_a_right = sum(
+            l.right for l in self.mode_key_a if isinstance(l, PadSpec)
+        )
+        pad_b_left = sum(
+            l.left for l in self.mode_key_b if isinstance(l, PadSpec)
+        )
+        pad_b_right = sum(
+            l.right for l in self.mode_key_b if isinstance(l, PadSpec)
+        )
+        if not self.ignore_pad:
+            pad_a_left = 0
+            pad_a_right = 0
+            pad_b_left = 0
+            pad_b_right = 0
+
+        # Get mode sizes
         size_a = self.mode_key_a.in_len(1, mode="max")
         size_b = self.mode_key_b.in_len(1, mode="max")
         if size_a is None or size_b is None:
@@ -210,76 +263,59 @@ class Spacing(Spec):
                 f"Receptive field of {self} is calculated as"
                 f" {size_a} and {size_b}; expected int for both"
             )
+        size_a += pad_a_left + pad_a_right
+        size_b += pad_b_left + pad_b_right
 
-        log_spacing: Tensor = self.log_spacing
-
-        # Adjust for max_overlap and max_spacing
-        # overlap(offset) = min(
-        #   min(size_a, size_b),
-        #   size_a - offset if offset > 0 else size_b + offset
-        # )
-        # spacing = -overlap(offset)
-        if self.max_spacing is not None:
-            log_spacing = log_spacing.index_fill(  # positive offsets
-                -1,
-                torch.arange(
-                    self.max_num_windows + self.max_spacing + size_a,
-                    log_spacing.shape[-1],
-                ),
-                float("-inf"),
-            )
-            log_spacing = log_spacing.index_fill(  # negative offsets
-                -1,
-                torch.arange(
-                    0, self.max_num_windows - self.max_spacing - size_b - 1
-                ),
-                float("-inf"),
-            )
-        if self.max_overlap is not None and self.max_overlap < min(
-            size_a, size_b
-        ):
-            log_spacing = log_spacing.index_fill(
-                -1,
-                torch.arange(
-                    self.max_num_windows - size_b + self.max_overlap,
-                    self.max_num_windows + size_a - self.max_overlap - 1,
-                ),
-                float("-inf"),
-            )
-        if self._score_mode != "both":
-            midpoint = self.max_num_windows + ((size_a - size_b) // 2)
-            log_spacing = log_spacing.index_fill(
-                -1,
-                (
-                    torch.arange(0, midpoint)
-                    if self._score_mode == "positive"
-                    else torch.arange(midpoint, log_spacing.shape[-1])
-                ),
-                float("-inf"),
-            )
-
-        # Adjust strands
-        if not self._score_same:
-            log_spacing = log_spacing.index_fill(
-                0, torch.tensor(0), float("-inf")
-            )
-        if not self._score_reverse:
-            log_spacing = log_spacing.index_fill(
-                0, torch.tensor(1), float("-inf")
-            )
-
-        # Shift to the right index
-        shift_left = self.max_num_windows - n_windows_a
-        shift_right = n_windows_b - self.max_num_windows
-        if shift_right == 0:
-            log_spacing = log_spacing[:, shift_left:]
+        # Get log_spacing with adjustments for padding
+        adjust_1 = pad_b_left - pad_a_left
+        adjust_2 = pad_b_right - pad_a_right
+        log_spacing = self._update_overlap(
+            self.log_spacing,
+            size_a,
+            size_b,
+            adjust_1,
+            n_windows_a,
+            n_windows_b,
+        )
+        if self.n_strands > 1:
+            if adjust_1 != adjust_2:
+                log_spacing_2 = self._update_overlap(
+                    self.log_spacing,
+                    size_a,
+                    size_b,
+                    adjust_2,
+                    n_windows_a,
+                    n_windows_b,
+                ).flip((-1, -2))
+                log_spacing = torch.stack((log_spacing, log_spacing_2), dim=1)
+            else:
+                log_spacing_2 = log_spacing.flip((-1, -2))
+                log_spacing = torch.stack((log_spacing, log_spacing_2), dim=1)
         else:
-            log_spacing = log_spacing[:, shift_left:shift_right]
+            log_spacing = log_spacing.unsqueeze(0)
         assert log_spacing.shape == (
+            self.n_strands,
             self.n_strands,
             n_windows_a + n_windows_b - 1,
         )
 
+        # Update log_spacing according to scored offsets
+        if self.score_mode != "both" and n_windows_a <= log_spacing.shape[-1]:
+            log_spacing = log_spacing.index_fill(
+                -1,
+                (
+                    torch.arange(0, n_windows_a)
+                    if self.score_mode == "positive"
+                    else torch.arange(n_windows_a, log_spacing.shape[-1])
+                ),
+                float("-inf"),
+            )
+        if not self.score_same:
+            log_spacing[0, 0] = float("-inf")
+            log_spacing[1, 1] = float("-inf")
+        if not self.score_reverse:
+            log_spacing[0, 1] = float("-inf")
+            log_spacing[1, 0] = float("-inf")
         if self.normalize:
             log_spacing = (
                 log_spacing
@@ -305,26 +341,17 @@ class Spacing(Spec):
             :math:`(\text{n_strands}_a,\text{n_strands}_b,
             \text{out_length}_a,\text{out_length}_b)`.)`
         """
-        log_spacing = self.get_log_spacing(n_windows_a, n_windows_b)
-
-        # Convert to diagonal constant matrix
-        log_spacing = log_spacing.unfold(-1, n_windows_b, 1).flip(-2)
-        assert log_spacing.shape == (self.n_strands, n_windows_a, n_windows_b)
-
-        # Stack strands into a single matrix
-        if self.n_strands == 2:
-            log_spacing = torch.stack(
-                (log_spacing, log_spacing.flip(-1, -2, -3)), 1
-            )
-        else:
-            log_spacing.unsqueeze_(0)
+        log_spacing = (
+            self.get_log_spacing(n_windows_a, n_windows_b)
+            .unfold(-1, n_windows_b, 1)
+            .flip(-2)
+        )
         assert log_spacing.shape == (
             self.n_strands,
             self.n_strands,
             n_windows_a,
             n_windows_b,
         )
-
         return log_spacing
 
 
@@ -779,7 +806,7 @@ class Cooperativity(Binding):
         Returns:
             A tensor with the flattened representation of the cooperativity
             of each pair of windows :math:`(x^a_m, x^b_n)`, of shape
-            :math:`(\text{n_strands},
+            :math:`(\text{n_strands}_a,\text{n_strands}_b,
             \text{out_length}_a+\text{out_length}_b-1)`.
         """
         return self.spacing.get_log_spacing(
@@ -827,10 +854,6 @@ class Cooperativity(Binding):
 
         # Add spacing value and return
         log_spacing = self.get_log_spacing()
-        if self.n_strands > 1:
-            log_spacing = torch.stack(
-                [log_spacing, log_spacing.flip(-1, -2)], -2
-            )
         log_spacing_diagonals = [
             l_s.unsqueeze(-1) + diagonal
             for l_s, diagonal in zip(log_spacing.unbind(-1), log_posbias)
@@ -1001,22 +1024,15 @@ class Cooperativity(Binding):
                 for st_b in range(self.n_strands):
                     if posbias:
                         weight = log_spacing[..., st_a, st_b, :]
-                        if torch.all(torch.isneginf(weight)):
-                            continue
-                        diagonal = (
-                            weight
-                            + windows_a[:, st_a, sl_0]
-                            + windows_b[:, st_b, sl_1]
-                        )
                     else:
-                        weight = log_spacing[0 if st_a == st_b else -1]
-                        if torch.all(torch.isneginf(weight)):
-                            continue
-                        diagonal = (
-                            weight
-                            + windows_a[:, st_a, sl_0 if st_b == 0 else sl_1]
-                            + windows_b[:, st_b, sl_1 if st_b == 0 else sl_0]
-                        )
+                        weight = log_spacing[st_a, st_b]
+                    if torch.all(torch.isneginf(weight)):
+                        continue
+                    diagonal = (
+                        weight
+                        + windows_a[:, st_a, sl_0]
+                        + windows_b[:, st_b, sl_1]
+                    )
                     out = torch.logaddexp(
                         out,
                         (torch.exp(self.log_hill) * diagonal).logsumexp(-1),

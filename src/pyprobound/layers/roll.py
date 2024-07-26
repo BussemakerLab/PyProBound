@@ -57,11 +57,13 @@ class RollSpec(LayerSpec):
     def out_len(
         self, length: T, mode: Literal["min", "max", "shape"] = "shape"
     ) -> T:
-        if self.max_length is not None:
-            if mode == "shape":
-                return length * 0 + self.max_length
-            return cast(T, np.minimum(length, self.max_length))
-        return super().out_len(length, mode)
+        if self.max_length is None:
+            return super().out_len(length, mode)
+        if mode == "shape":
+            return length * 0 + self.max_length
+        if isinstance(length, int):
+            return min(length, self.max_length)
+        return torch.minimum(length, torch.tensor(self.max_length))
 
     @overload
     def in_len(self, length: T, mode: Literal["min"]) -> T: ...

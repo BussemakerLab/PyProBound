@@ -23,6 +23,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "logomaker",
+    "biopython",
     "typing-extensions",
 ]
 

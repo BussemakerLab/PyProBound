@@ -26,13 +26,17 @@ T = TypeVar("T", int, Tensor)
 
 
 class NonSpecific(EmptyLayerSpec):
-    """Non-specific factor, equivalent to a PSAM with all betas equal."""
+    """Non-specific factor, equivalent to a PSAM of size 1 and equal betas."""
 
-    def __init__(self, alphabet: Alphabet, name: str = "") -> None:
+    def __init__(
+        self, alphabet: Alphabet, ignore_length: bool = False, name: str = ""
+    ) -> None:
         """Initializes the non-specific mode.
 
         Args:
             alphabet: The alphabet used to encode sequences into tensors.
+            ignore_length: Whether to use the same non-specific binding factor
+                regardless of input length.
             name: A string used to describe the non-specific mode.
         """
         super().__init__(
@@ -40,6 +44,7 @@ class NonSpecific(EmptyLayerSpec):
         )
         self._layers: set[Conv0d]  # type: ignore[assignment]
         self.alphabet = alphabet
+        self.ignore_length = ignore_length
 
     @override
     def out_len(
@@ -240,7 +245,10 @@ class Conv0d(Layer):
             The log score tensor of shape :math:`(\text{minibatch},1,1)`.
         """
         lengths = self.lengths(seqs)
-        out = torch.log(lengths).unsqueeze(1).unsqueeze(1)
+        if self.layer_spec.ignore_length:
+            out = torch.zeros_like(lengths).unsqueeze(1).unsqueeze(1)
+        else:
+            out = torch.log(lengths).unsqueeze(1).unsqueeze(1)
         if self.log_posbias.requires_grad or torch.any(self.log_posbias != 0):
             out += self.get_log_posbias()[lengths]
         return out

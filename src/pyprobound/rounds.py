@@ -235,7 +235,7 @@ class Round(BaseRound):
     def __init__(
         self,
         aggregate: Aggregate,
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         library_concentration: float = -1,
@@ -260,13 +260,13 @@ class Round(BaseRound):
             name=name,
         )
         self.aggregate = aggregate
-        self.reference_round: BaseRound
+        self.reference_round: BaseRound | None
 
     @classmethod
     def from_binding(
         cls,
         binding: Iterable[Binding],
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         train_concentration: bool = False,
@@ -411,7 +411,7 @@ class RhoGammaRound(Round):
     def __init__(
         self,
         aggregate: Aggregate,
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         library_concentration: float = -1,
@@ -450,7 +450,7 @@ class RhoGammaRound(Round):
     def from_binding(
         cls,
         binding: Iterable[Binding],
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         train_concentration: bool = False,
@@ -529,7 +529,7 @@ class ExponentialRound(Round):
     def __init__(
         self,
         aggregate: Aggregate,
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         library_concentration: float = -1,
@@ -603,7 +603,7 @@ class ExponentialRound(Round):
     def from_binding(
         cls,
         binding: Iterable[Binding],
-        reference_round: BaseRound,
+        reference_round: BaseRound | None,
         train_depth: bool = True,
         log_depth: float = 0,
         train_concentration: bool = False,

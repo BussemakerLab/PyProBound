@@ -4,9 +4,13 @@ Members are explicitly re-exported in pyprobound.
 
 A count table consists of sequences and their corresponding counts within each
 selection round. For example, a three-round SELEX table might be:
+
 AAAA    0   0   2
+
 ACGA    2   1   0
+
 CGAA    0   1   5
+
 TCAG    1   0   0
 
 A table might also contain flanking sequences on the left and right, which are
@@ -332,6 +336,7 @@ class CountTable(Table[CountBatch]):
         dataframe: DataFrame,
         alphabet: Alphabet,
         transliterate: dict[str, str] | None = None,
+        transliterate_flanks: bool = False,
         left_flank: str = "",
         right_flank: str = "",
         left_flank_length: int = 0,
@@ -348,6 +353,7 @@ class CountTable(Table[CountBatch]):
             dataframe: The dataframe used to initialize the count table.
             alphabet: The alphabet used to encode sequences into tensors.
             transliterate: A mapping of strings to be replaced before encoding.
+            transliterate_flanks: Whether to apply transliteration to flanks.
             left_flank: The prepended sequence.
             right_flank: The appended sequence.
             left_flank_length: The scored length of the left flank.
@@ -374,8 +380,9 @@ class CountTable(Table[CountBatch]):
         if transliterate is not None:
             for pattern, replace in transliterate.items():
                 dataframe.index = dataframe.index.str.replace(pattern, replace)
-                left_flank = left_flank.replace(pattern, replace)
-                right_flank = right_flank.replace(pattern, replace)
+                if transliterate_flanks:
+                    left_flank = left_flank.replace(pattern, replace)
+                    right_flank = right_flank.replace(pattern, replace)
 
         # Instance attributes
         if max_left_flank_length is None:
@@ -387,7 +394,9 @@ class CountTable(Table[CountBatch]):
         self.wildcard_padded = wildcard_pad
 
         # Get dataframe data
-        self._padding_value = alphabet.get_index["*" if wildcard_pad else " "]
+        self._padding_value = alphabet.neginf_pad
+        if wildcard_pad:
+            self._padding_value = alphabet.wildcard_pad
         self.target = torch.tensor(dataframe.values, dtype=__precision__)
         self.seqs = torch.nn.utils.rnn.pad_sequence(
             [alphabet.translate(seq) for seq in dataframe.index],

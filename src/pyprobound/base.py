@@ -263,7 +263,9 @@ class Component(torch.nn.Module, abc.ABC):
         Returns:
             The metadata field of the checkpoint file.
         """
-        checkpoint_state: dict[str, Any] = torch.load(checkpoint)
+        checkpoint_state: dict[str, Any] = torch.load(
+            checkpoint, weights_only=True
+        )
         checkpoint_state_dict: dict[str, Any] = checkpoint_state["state_dict"]
         self.reload_from_state_dict(checkpoint_state_dict)
         return cast(dict[str, Any], checkpoint_state["metadata"])

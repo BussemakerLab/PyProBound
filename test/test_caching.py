@@ -23,37 +23,19 @@ class TestCaching(unittest.TestCase):
 
         psam_0 = pyprobound.layers.PSAM(1, self.count_tables[0].alphabet)
         psam_1 = pyprobound.layers.PSAM(1, self.count_tables[0].alphabet)
-        conv1d_0_expt_0 = pyprobound.layers.Conv1d.from_psam(
-            psam_0, self.count_tables[0]
-        )
-        conv1d_1_expt_0 = pyprobound.layers.Conv1d.from_psam(
-            psam_1, self.count_tables[0]
-        )
-        bmd_0_expt_0 = pyprobound.Mode([conv1d_0_expt_0])
-        bmd_1_expt_0 = pyprobound.Mode([conv1d_1_expt_0])
+        bmd_0_expt_0 = pyprobound.Mode.from_psam(psam_0, self.count_tables[0])
+        bmd_1_expt_0 = pyprobound.Mode.from_psam(psam_1, self.count_tables[0])
         coop_0_0_expt_0 = pyprobound.Cooperativity(
-            pyprobound.Spacing.from_specs([psam_0], [psam_1]),
-            bmd_0_expt_0,
-            bmd_1_expt_0,
+            pyprobound.Spacing([psam_0], [psam_1]), bmd_0_expt_0, bmd_1_expt_0
         )
 
-        conv1d_0_expt_1 = pyprobound.layers.Conv1d.from_psam(
-            psam_0, self.count_tables[1]
-        )
-        conv1d_1_expt_1 = pyprobound.layers.Conv1d.from_psam(
-            psam_1, self.count_tables[1]
-        )
-        bmd_0_expt_1 = pyprobound.Mode([conv1d_0_expt_1])
-        bmd_1_expt_1 = pyprobound.Mode([conv1d_1_expt_1])
+        bmd_0_expt_1 = pyprobound.Mode.from_psam(psam_0, self.count_tables[1])
+        bmd_1_expt_1 = pyprobound.Mode.from_psam(psam_1, self.count_tables[1])
         coop_0_0_expt_1 = pyprobound.Cooperativity(
-            pyprobound.Spacing.from_specs([psam_0], [psam_0]),
-            bmd_0_expt_1,
-            bmd_0_expt_1,
+            pyprobound.Spacing([psam_0], [psam_0]), bmd_0_expt_1, bmd_0_expt_1
         )
         coop_0_1_expt_1 = pyprobound.Cooperativity(
-            pyprobound.Spacing.from_specs([psam_0], [psam_1]),
-            bmd_0_expt_1,
-            bmd_1_expt_1,
+            pyprobound.Spacing([psam_0], [psam_1]), bmd_0_expt_1, bmd_1_expt_1
         )
 
         round_0_expt_0 = pyprobound.rounds.InitialRound()
