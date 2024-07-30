@@ -15,7 +15,7 @@ from torch.utils.data import Sampler
 from typing_extensions import override
 
 from . import __precision__
-from .aggregate import Aggregate
+from .aggregate import Aggregate, Contribution
 from .base import Spec
 from .cooperativity import Cooperativity
 from .layers import Layer
@@ -130,7 +130,6 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
 
             elif isinstance(mod, Cooperativity):
                 mod.train_hill = train_hill
-                mod.train_posbias = False
                 if update_construct:
                     for diag in mod.log_posbias:
                         diag.zero_()
@@ -141,12 +140,6 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
                         parameter.zero_()
 
         self.round.check_length_consistency()
-
-        # Unfreeze all parameters that aren't in a Layer
-        self.round.unfreeze("all")
-        for mod in self.round.modules():
-            if isinstance(mod, (Layer, Spec)):
-                mod.freeze()
 
         # Set up optimizer
         self.optimizer = Optimizer(
@@ -410,51 +403,64 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
 
     def _fit(self, log: bool = False) -> None:
         """Fits experiment-specific parameters to the validation data."""
-        multiples = [0.1, 0.316, 1, 3.162, 10]
-        best_loss = torch.tensor(float("inf"))
-        original_state_dict = copy.deepcopy(self.state_dict())
-        best_state_dict = copy.deepcopy(self.state_dict())
+        # Freeze all parameters
+        self.round.freeze()
 
-        for scale_m in multiples:
-            for intercept_m in multiples:
-                curr_state_dict = copy.deepcopy(original_state_dict)
-                if log:
-                    curr_state_dict["scale"] = (
-                        np.log(scale_m) + original_state_dict["scale"]
-                    )
-                    curr_state_dict["intercept"] = (
-                        np.log(intercept_m) + original_state_dict["intercept"]
-                    )
-                else:
-                    curr_state_dict["scale"] = (
-                        scale_m * original_state_dict["scale"]
-                    )
-                    curr_state_dict["intercept"] = (
-                        intercept_m * original_state_dict["intercept"]
-                    )
-                self.optimizer.model.load_state_dict(curr_state_dict)
-                loss = self.optimizer.train_simultaneous()
-                if loss < best_loss:
-                    best_loss = loss
-                    best_state_dict = copy.deepcopy(
-                        self.optimizer.model.state_dict()
-                    )
+        # Test different offsets
+        if self.scale.requires_grad or self.intercept.requires_grad:
+            multiples = [0.1, 0.316, 1, 3.162, 10]
+            best_loss = torch.tensor(float("inf"))
+            original_state_dict = copy.deepcopy(self.state_dict())
+            best_state_dict = copy.deepcopy(self.state_dict())
 
-        self.load_state_dict(best_state_dict)
+            for scale_m in multiples:
+                for intercept_m in multiples:
+                    curr_state_dict = copy.deepcopy(original_state_dict)
+                    if log:
+                        curr_state_dict["scale"] = (
+                            np.log(scale_m) + original_state_dict["scale"]
+                        )
+                        curr_state_dict["intercept"] = (
+                            np.log(intercept_m)
+                            + original_state_dict["intercept"]
+                        )
+                    else:
+                        curr_state_dict["scale"] = (
+                            scale_m * original_state_dict["scale"]
+                        )
+                        curr_state_dict["intercept"] = (
+                            intercept_m * original_state_dict["intercept"]
+                        )
+                    self.optimizer.model.load_state_dict(curr_state_dict)
+                    loss = self.optimizer.train_simultaneous()
+                    if loss < best_loss:
+                        best_loss = loss
+                        best_state_dict = copy.deepcopy(
+                            self.optimizer.model.state_dict()
+                        )
+            self.load_state_dict(best_state_dict)
+            self.optimizer.save(self.checkpoint)
+
+        # Unfreeze activities
+        for mod in self.modules():
+            if isinstance(mod, Contribution):
+                mod.unfreeze("activity")
+        self.optimizer.train_simultaneous()
         self.optimizer.save(self.checkpoint)
 
-        # Unfreeze experiment-specific parameters
-        if self.train_posbias:
-            for mod in self.round.modules():
+        # Unfreeze remaining parameters
+        self.round.unfreeze()
+        for mod in self.modules():
+            if isinstance(mod, Spec):
+                # Keep experiment-independent params frozen
+                mod.freeze()
+            if self.train_posbias:
+                # Unfreeze experiment-specific params
                 if isinstance(mod, Layer):
                     for parameter in mod.parameters(recurse=False):
                         parameter.requires_grad_()
-                elif isinstance(mod, Cooperativity):
-                    if mod.train_posbias:
-                        mod.log_posbias.requires_grad_()
-
-            self.optimizer.train_simultaneous()
-            self.optimizer.save(self.checkpoint)
+        self.optimizer.train_simultaneous()
+        self.optimizer.save(self.checkpoint)
 
 
 class Fit(BaseFit):

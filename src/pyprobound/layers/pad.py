@@ -168,18 +168,23 @@ def get_padding_layers(
         The layers needed to pad sequences with variable length sequences.
     """
     layers: list[Layer] = []
-    layers.append(Pad.from_spec(spec=PadSpec(alphabet, left=left), prev=prev))
-    layers.append(
-        Roll.from_spec(
-            RollSpec(alphabet=alphabet, direction="right"), prev=layers[-1]
+    if left != 0:
+        layers.append(
+            Pad.from_spec(spec=PadSpec(alphabet, left=left), prev=prev)
         )
-    )
-    layers.append(
-        Pad.from_spec(spec=PadSpec(alphabet, right=right), prev=layers[-1])
-    )
-    layers.append(
-        Roll.from_spec(
-            RollSpec(alphabet=alphabet, direction="left"), prev=layers[-1]
+        prev = layers[-1]
+    if right != 0:
+        layers.append(
+            Roll.from_spec(
+                RollSpec(alphabet=alphabet, direction="right"), prev=prev
+            )
         )
-    )
+        layers.append(
+            Pad.from_spec(spec=PadSpec(alphabet, right=right), prev=layers[-1])
+        )
+        layers.append(
+            Roll.from_spec(
+                RollSpec(alphabet=alphabet, direction="left"), prev=layers[-1]
+            )
+        )
     return layers
