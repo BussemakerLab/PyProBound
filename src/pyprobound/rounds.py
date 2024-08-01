@@ -17,6 +17,28 @@ from .base import Binding, BindingOptim, Call, Component, Spec, Transform
 from .utils import log1mexp
 
 
+def repeat_round(
+    binding: Iterable[Binding], n_rounds: int, round_type: type[Round]
+) -> list[InitialRound | Round]:
+    """Creates multiple sequential enrichment rounds from binding components.
+
+    Args:
+        binding: The binding components driving enrichment.
+        n_rounds: The total number of sequentially enriched libraries.
+        round_type: The sequencing round type to be repeated.
+
+    Returns:
+        A list of `n_rounds` rounds.
+    """
+    rounds: list[InitialRound | Round] = []
+    for round_idx in range(n_rounds):
+        if round_idx == 0:
+            rounds.append(InitialRound())
+        else:
+            rounds.append(round_type.from_binding(binding, rounds[-1]))
+    return rounds
+
+
 class BaseRound(Transform, abc.ABC):
     r"""Base class for sequencing rounds.
 
