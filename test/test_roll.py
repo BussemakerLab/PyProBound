@@ -1,6 +1,5 @@
 # pylint: disable=missing-class-docstring, missing-function-docstring, missing-module-docstring
 import unittest
-from typing import cast
 
 import torch
 from typing_extensions import override
@@ -38,10 +37,11 @@ class TestRollLeft(BaseTestCases.BaseTestLayer):
                 if direction == "center":
                     roll //= 2
                 seq = seq.roll(shifts=roll.item(), dims=-1)
-            if direction == "left":
-                seq = seq[..., : cast(int, max_length)]
-            elif direction == "right":
-                seq = seq[..., -cast(int, max_length) :]
+            if max_length is not None:
+                if direction == "left":
+                    seq = seq[..., :max_length]
+                elif direction == "right":
+                    seq = seq[..., -max_length:]
             seqs.append(seq)
 
         self.assertTrue(

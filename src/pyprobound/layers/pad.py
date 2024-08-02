@@ -44,6 +44,10 @@ class PadSpec(LayerSpec):
         self.value = alphabet.wildcard_pad
         self.alphalen = len(alphabet.alphabet)
 
+    @override
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(left={self.left}, right={self.right})"
+
     @property
     def left(self) -> int:
         """The number of elements to pad on the left."""
@@ -76,7 +80,6 @@ class Pad(Layer):
         input_shape: int,
         min_input_length: int,
         max_input_length: int,
-        name: str = "",
     ) -> None:
         """Initializes the padding layer.
 
@@ -87,28 +90,23 @@ class Pad(Layer):
                 sequence.
             max_input_length: The maximum number of finite elements in an input
                 sequence.
-            name: A string used to describe the padding layer.
         """
         super().__init__(
             layer_spec=layer_spec,
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
         self.layer_spec: PadSpec
 
     @classmethod
-    def from_spec(
-        cls, spec: PadSpec, prev: Table[Any] | Layer, name: str = ""
-    ) -> Self:
+    def from_spec(cls, spec: PadSpec, prev: Table[Any] | Layer) -> Self:
         """Creates a new instance from a specification and an input component.
 
         Args:
             spec: The specification of the padding layer.
             prev: If used as the first layer, the table that will be passed as
                 an input; otherwise, the layer that precedes it.
-            name: A string used to describe the padding layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")
@@ -123,7 +121,6 @@ class Pad(Layer):
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
 
     @override

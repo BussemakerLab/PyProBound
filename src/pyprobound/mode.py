@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeVar, overload
 
 import torch
 from torch import Tensor
+from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
 from . import __precision__
@@ -78,6 +79,29 @@ class Mode(Binding, LengthManager):
 
         # Verify scoring model
         self.check_length_consistency()
+
+    @override
+    def __repr__(self) -> str:
+        if len(self.layers) > 1 or "\n" in repr(self.layers[0]):
+            return (
+                f"{type(self).__name__}( [\n  "
+                + "\n  ".join(
+                    _addindent(repr(i), 2) + "," for i in self.layers  # type: ignore[no-untyped-call]
+                )
+                + "\n] )"
+            )
+        return f"{type(self).__name__}( [ {repr(self.layers[0])} ] )"
+
+    @override
+    def __str__(self) -> str:
+        if self.name != "":
+            return super().__str__()
+        if all(i.layer_spec.name != "" for i in self.layers):
+            layer_str = "-".join(i.layer_spec.name for i in self.layers)
+            if "-" in layer_str:
+                return f"{type(self).__name__}-[{layer_str}]"
+            return f"{type(self).__name__}-{layer_str}"
+        return self.__repr__()
 
     @override
     @property

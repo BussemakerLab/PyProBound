@@ -7,6 +7,7 @@ from typing import cast
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from typing_extensions import override
 
 from . import __precision__
 
@@ -64,7 +65,7 @@ class Alphabet:
             color_scheme: Passed to Logomaker.Logo.
         """
         # Store attributes
-        self.alphabet = tuple(list(dict.fromkeys(alphabet)))  # Remove dupes
+        self.alphabet = tuple(dict.fromkeys(alphabet))  # Remove dupes
         self.complement = complement
         self.color_scheme = color_scheme
         self.monomer_length = monomer_length
@@ -150,6 +151,12 @@ class Alphabet:
         self.pairwise_embedding = torch.nn.Embedding.from_pretrained(  # type: ignore[no-untyped-call]
             pairwise_embedding_weight
         )
+
+    @override
+    def __repr__(self) -> str:
+        if type(self).__name__ == "Alphabet":
+            return f"{type(self).__name__}({self.alphabet})"
+        return f"{type(self).__name__}()"
 
     def translate(self, sequence: str) -> Tensor:
         r"""Translates a sequence into a tensor.

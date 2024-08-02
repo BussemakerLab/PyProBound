@@ -20,12 +20,12 @@ from .. import __precision__
 from ..alphabets import Alphabet
 from ..base import BindingOptim, Call, Step
 from ..table import Table
-from .layer import EmptyLayerSpec, Layer
+from .layer import Layer, LayerSpec
 
 T = TypeVar("T", int, Tensor)
 
 
-class NonSpecific(EmptyLayerSpec):
+class NonSpecific(LayerSpec):
     """Non-specific factor, equivalent to a PSAM of size 1 and equal betas."""
 
     def __init__(
@@ -45,6 +45,13 @@ class NonSpecific(EmptyLayerSpec):
         self._layers: set[Conv0d]  # type: ignore[assignment]
         self.alphabet = alphabet
         self.ignore_length = ignore_length
+
+    @override
+    def __repr__(self) -> str:
+        out = f"alphabet={repr(self.alphabet)}"
+        if self.ignore_length:
+            out += f", ignore_length={self.ignore_length})"
+        return f"{type(self).__name__}({out})"
 
     @override
     def out_len(
@@ -88,7 +95,6 @@ class Conv0d(Layer):
         min_input_length: int,
         max_input_length: int,
         train_posbias: bool = False,
-        name: str = "",
     ) -> None:
         """Initializes the 0d convolution layer.
 
@@ -100,14 +106,12 @@ class Conv0d(Layer):
             max_input_length: The maximum number of finite elements in an input
                 sequence.
             train_posbias: Whether to train a bias for each input length.
-            name: A string used to describe the 0d convolution layer.
         """
         super().__init__(
             layer_spec=nonspecific,
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
         self.layer_spec: NonSpecific
 
@@ -124,7 +128,6 @@ class Conv0d(Layer):
         nonspecific: NonSpecific,
         prev: Table[Any] | Layer,
         train_posbias: bool = False,
-        name: str = "",
     ) -> Self:
         """Creates a new instance from a specification and an input component.
 
@@ -133,7 +136,6 @@ class Conv0d(Layer):
             prev: If used as the first layer, the table that will be passed as
                 an input; otherwise, the layer that precedes it.
             train_posbias: Whether to train a bias for each input length.
-            name: A string used to describe the 0d convolution layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")
@@ -149,7 +151,6 @@ class Conv0d(Layer):
             min_input_length=min_input_length,
             max_input_length=max_input_length,
             train_posbias=train_posbias,
-            name=name,
         )
 
     @override

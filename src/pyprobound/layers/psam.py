@@ -190,6 +190,43 @@ class PSAM(LayerSpec):
         if seed is not None:
             self._seed(seed, seed_scale=seed_scale)
 
+    @override
+    def __repr__(self) -> str:
+        args = [f"kernel_size={self.kernel_size}"]
+        if self.pairwise_distance > 0:
+            args.append(f"pairwise_distance={self.pairwise_distance}")
+
+        if self.alphabet is not None:
+            args.append(f"alphabet={self.alphabet}")
+            if self.alphabet.complement != self.score_reverse:
+                args.append(f"score_reverse={self.score_reverse}")
+        else:
+            args.append(f"out_channels={self.out_channels}")
+            args.append(f"in_channels={self.in_channels}")
+            if self.score_reverse:
+                args.append(f"score_reverse={self.score_reverse}")
+
+        if self.dilation != 1:
+            args.append(f"dilation={self.dilation}")
+
+        if self.symmetry.tolist() != list(range(1, self.kernel_size + 1)):
+            args.append(f"symmetry={self.symmetry.tolist()}")
+
+        out = []
+        temp = ""
+        for i in args:
+            if len(temp) == 0:
+                temp = i
+            elif len(temp) + len(i) + 2 > 60:
+                out.append(temp + ",")
+                temp = i
+            else:
+                temp += ", " + i
+        out.append(temp)
+        if len(out) > 1:
+            return f"{type(self).__name__}(\n  " + "\n  ".join(out) + "\n)"
+        return f"{type(self).__name__}( {out[0]} )"
+
     @property
     def kernel_size(self) -> int:
         """The size of the convolving PSAM kernel."""

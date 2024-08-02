@@ -64,6 +64,11 @@ class Experiment(Transform):
             sorter.static_order()
         )
 
+        # Update names
+        for rnd_idx, rnd in enumerate(self.rounds):
+            if rnd.name == "":
+                rnd.name = str(rnd_idx)
+
         # Check depth training
         for rnd in self.rounds:
             if rnd not in self.observed_rounds and rnd.train_depth:

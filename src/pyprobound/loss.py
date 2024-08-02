@@ -12,15 +12,13 @@ from torch import Tensor
 from typing_extensions import override
 
 from . import __precision__
-from .base import Component, Spec, Transform
+from .base import Component, Transform
 from .containers import TModuleList
-from .cooperativity import Cooperativity
 from .experiment import Experiment
 from .layers import PSAM
-from .mode import Mode
 from .rounds import BaseRound
 from .table import CountBatch
-from .utils import get_ordinal, get_split_size
+from .utils import get_split_size
 
 T = TypeVar("T")
 
@@ -125,63 +123,6 @@ class MultiExperimentLoss(LossModule[CountBatch]):
                 f"Length of weights {len(self.weights)} does not match"
                 f" number of experiments {len(self.experiments)}"
             )
-
-        # Fill in spec names for each type
-        type_to_specs: dict[str, dict[Spec, None]] = {}
-        for mod in self.modules():
-            if isinstance(mod, Spec):
-                type_name = type(mod).__name__
-                if type_name not in type_to_specs:
-                    type_to_specs[type_name] = {}
-                type_to_specs[type_name][mod] = None
-        for type_specs in type_to_specs.values():
-            for spec_idx, spec in enumerate(type_specs):
-                if spec.name == "":
-                    spec.name = get_ordinal(spec_idx)
-
-        # Add ancestry information to component names
-        for expt_idx, expt in enumerate(self.components()):
-            if expt.name == "":
-                expt.name = get_ordinal(expt_idx)
-            for rnd_idx, rnd in enumerate(expt.components()):
-                if rnd.name == "":
-                    rnd.name = f"{expt}→{get_ordinal(rnd_idx)}"
-                for agg in rnd.components():
-                    agg.name = f"{rnd}→{agg.name}"
-                    for ctrb_idx, ctrb in enumerate(agg.components()):
-                        ctrb.name = f"{agg}→{get_ordinal(ctrb_idx)}"
-            for mod in expt.modules():
-                if isinstance(mod, Mode):
-                    if mod.name == "":
-                        mod.name = f"{expt}→" + "-".join(
-                            str(i) for i in mod.key()
-                        )
-                    for layer_idx, layer in enumerate(mod.layers):
-                        if layer.name == "":
-                            layer.name = (
-                                f"{mod}→Layer{layer_idx}:{layer.layer_spec}←"
-                            )
-                elif isinstance(mod, Cooperativity):
-                    if mod.spacing.name == "":
-                        mod.spacing.name = (
-                            "-".join(str(i) for i in mod.spacing.mode_key_a)
-                            + "::"
-                            + "-".join(str(i) for i in mod.spacing.mode_key_b)
-                        )
-                    if mod.name == "":
-                        mod.name = f"{expt}→{mod.spacing.name}"
-
-        # Check that all names are unique
-        specs = [mod for mod in self.modules() if isinstance(mod, Spec)]
-        if len(specs) != len(set(str(spec) for spec in specs)):
-            raise ValueError("Binding component names are not unique")
-        if len(self.experiments) != len(
-            set(expt.name for expt in self.experiments)
-        ):
-            raise ValueError("Experiment names are not unique")
-        rnds = [mod for mod in self.modules() if isinstance(mod, BaseRound)]
-        if len(rnds) != len(set(rnd.name for rnd in rnds)):
-            raise ValueError("Round names are not unique")
 
     @override
     def components(self) -> Iterator[Experiment]:

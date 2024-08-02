@@ -50,8 +50,22 @@ class RollSpec(LayerSpec):
         self.alphabet = alphabet
         self._layers: set[Roll]  # type: ignore[assignment]
         self.direction = direction
-        self.max_length = max_length
+        self._max_length = max_length
         self.include_n = include_n
+
+    @override
+    def __repr__(self) -> str:
+        out = f"direction={self.direction}"
+        if self.max_length is not None:
+            out += f", max_length={self.max_length}"
+        if self.include_n:
+            out += f", include_n={self.include_n}"
+        return f"{type(self).__name__}({out})"
+
+    @property
+    def max_length(self) -> int | None:
+        """The number of elements to keep from the aligned end."""
+        return self._max_length
 
     @override
     def out_len(
@@ -91,7 +105,6 @@ class Roll(Layer):
         input_shape: int,
         min_input_length: int,
         max_input_length: int,
-        name: str = "",
     ) -> None:
         """Initializes the rolling layer.
 
@@ -102,28 +115,23 @@ class Roll(Layer):
                 sequence.
             max_input_length: The maximum number of finite elements in an input
                 sequence.
-            name: A string used to describe the roll layer.
         """
         super().__init__(
             layer_spec=layer_spec,
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
         self.layer_spec: RollSpec
 
     @classmethod
-    def from_spec(
-        cls, spec: RollSpec, prev: Table[Any] | Layer, name: str = ""
-    ) -> Self:
+    def from_spec(cls, spec: RollSpec, prev: Table[Any] | Layer) -> Self:
         """Creates a new instance from a specification and an input component.
 
         Args:
             spec: The specification of the roll layer.
             prev: If used as the first layer, the table that will be passed as
                 an input; otherwise, the layer that precedes it.
-            name: A string used to describe the roll layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")
@@ -138,7 +146,6 @@ class Roll(Layer):
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
 
     @override

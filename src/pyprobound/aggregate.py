@@ -37,7 +37,6 @@ class Contribution(Transform):
         train_activity: bool = True,
         log_activity: float = float("-inf"),
         activity_heuristic: float = 0.05,
-        name: str = "",
     ) -> None:
         r"""Initializes the contribution model.
 
@@ -47,9 +46,8 @@ class Contribution(Transform):
             log_activity: The initial value of `log_activity`.
             activity_heuristic: The fraction of the total aggregate that the
                 contribution will be set to when it is first optimized.
-            name: A string used to describe the round.
         """
-        super().__init__(name=name)
+        super().__init__()
 
         if not 0 < activity_heuristic < 1:
             raise ValueError(
@@ -63,6 +61,10 @@ class Contribution(Transform):
             requires_grad=self.train_activity,
         )
         self.activity_heuristic = activity_heuristic
+
+    @override
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}( " + repr(self.binding) + " )"
 
     @override
     def components(self) -> Iterator[Binding]:
@@ -145,7 +147,6 @@ class Aggregate(Transform):
         contributions: Iterable[Contribution],
         train_concentration: bool = False,
         target_concentration: float = 1,
-        name: str = "",
     ) -> None:
         """Initializes the aggregate.
 
@@ -154,9 +155,8 @@ class Aggregate(Transform):
             train_concentration: Whether to train the protein concentration.
             target_concentration: Protein concentration, used for estimating
                 the free protein concentration.
-            name: A string used to describe the aggregate.
         """
-        super().__init__(name=name)
+        super().__init__()
         self.train_concentration = train_concentration
         self.log_target_concentration: Tensor = torch.nn.Parameter(
             torch.tensor(math.log(target_concentration), dtype=__precision__),
@@ -180,7 +180,6 @@ class Aggregate(Transform):
         train_concentration: bool = False,
         target_concentration: float = 1,
         activity_heuristic: float = 0.05,
-        name: str = "",
     ) -> Self:
         r"""Creates a new instance from the binding modes.
 
@@ -191,7 +190,6 @@ class Aggregate(Transform):
                 the free protein concentration.
             activity_heuristic: The fraction of the total aggregate that the
                 contribution will be set to when it is first optimized.
-            name: A string used to describe the round.
         """
         return cls(
             (
@@ -200,7 +198,6 @@ class Aggregate(Transform):
             ),
             train_concentration=train_concentration,
             target_concentration=target_concentration,
-            name=name,
         )
 
     @override

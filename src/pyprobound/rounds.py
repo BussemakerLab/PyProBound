@@ -9,6 +9,7 @@ from typing import Any, Literal
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
 from . import __precision__
@@ -35,7 +36,11 @@ def repeat_round(
         if round_idx == 0:
             rounds.append(InitialRound())
         else:
-            rounds.append(round_type.from_binding(binding, rounds[-1]))
+            rounds.append(
+                round_type.from_binding(
+                    binding, rounds[-1], name=str(round_idx)
+                )
+            )
     return rounds
 
 
@@ -76,6 +81,21 @@ class BaseRound(Transform, abc.ABC):
             requires_grad=train_depth,
         )
         self._library_concentration = library_concentration
+
+    @override
+    def __repr__(self) -> str:
+        num_components = 0
+        for _ in self.components():
+            num_components += 1
+        if num_components == 0:
+            return f"{type(self).__name__}()"
+        return (
+            f"{type(self).__name__}( \n  "
+            + "\n  ".join(
+                _addindent(repr(i), 2) + "," for i in self.components()  # type: ignore[no-untyped-call]
+            )
+            + "\n )"
+        )
 
     @property
     def library_concentration(self) -> float:

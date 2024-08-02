@@ -12,6 +12,7 @@ from typing import Literal, cast
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torch.nn.modules.module import _addindent
 from typing_extensions import override
 
 from . import __precision__
@@ -88,6 +89,66 @@ class Spacing(Spec):
         self.score_reverse = score_reverse
         self.score_mode = score_mode
         self.ignore_pad = ignore_pad
+
+    @override
+    def __repr__(self) -> str:
+        args = []
+        for mode_key in (self.mode_key_a, self.mode_key_b):
+            if len(mode_key) > 1 or "\n" in repr(mode_key[0]):  # type: ignore[redundant-expr]
+                args.append(
+                    (
+                        "(\n  "
+                        + "\n  ".join(
+                            _addindent(repr(i), 2) + "," for i in mode_key  # type: ignore[no-untyped-call]
+                        )
+                        + "\n)"
+                    )
+                )
+            else:
+                args.append(f"( {repr(mode_key[0])}, )")
+        if self.max_overlap is not None:
+            args.append(f"max_overlap={self.max_overlap}")
+        if self.max_spacing is not None:
+            args.append(f"max_spacing={self.max_spacing}")
+        if not self.score_same:
+            args.append(f"score_same={self.score_same}")
+        if not self.score_reverse:
+            args.append(f"score_reverse={self.score_reverse}")
+        if self.score_mode != "both":
+            args.append(f"score_mode={self.score_mode}")
+
+        out = []
+        temp = ""
+        for i in args:
+            if len(temp) == 0:
+                temp = i
+            elif len(temp) + len(i) + 2 > 60:
+                out.append(temp + ",")
+                temp = i
+            else:
+                temp += ", " + i
+        out.append(temp)
+        if len(out) > 1 or "\n" in out[0]:
+            return (
+                f"{type(self).__name__}(\n  "
+                + "\n  ".join(_addindent(i, 2) for i in out)  # type: ignore[no-untyped-call]
+                + "\n)"
+            )
+        return f"{type(self).__name__}( {out[0]} )"
+
+    @override
+    def __str__(self) -> str:
+        if self.name != "":
+            return f"{type(self).__name__}-{self.name}"
+        if all(i.name != "" for i in self.mode_key_a) and all(
+            i.name != "" for i in self.mode_key_b
+        ):
+            mode_a = "-".join(i.name for i in self.mode_key_a)
+            mode_b = "-".join(i.name for i in self.mode_key_b)
+            if "-" in mode_a or "-" in mode_b:
+                return f"{type(self).__name__}-[{mode_a}]:[{mode_b}]"
+            return f"{type(self).__name__}-{mode_a}:{mode_b}"
+        return self.__repr__()
 
     @property
     def n_strands(self) -> Literal[1, 2]:
@@ -389,7 +450,6 @@ class Cooperativity(Binding):
         bias_bin: int = 1,
         length_specific_bias: bool = True,
         normalize: bool = False,
-        name: str = "",
     ) -> None:
         r"""Initializes the experiment-specific dimer cooperativity.
 
@@ -413,9 +473,8 @@ class Cooperativity(Binding):
             length_specific_bias: Whether to train a separate bias parameter
                 for each input length.
             normalize: Whether to mean-center `log_posbias` over all windows.
-            name: A string used to describe the cooperativity.
         """
-        super().__init__(name=name)
+        super().__init__()
 
         if any(i != j for i, j in zip(mode_a.key(), spacing.mode_key_a)):
             raise ValueError(f"{mode_a} does not match {spacing}")
@@ -479,6 +538,61 @@ class Cooperativity(Binding):
             ]
         )
         self.log_posbias.requires_grad_(train_posbias)
+
+    @override
+    def __repr__(self) -> str:
+        args = [repr(self.spacing)]
+        if (
+            self.mode_a.min_input_length != self.mode_a.max_input_length
+            or self.mode_b.min_input_length != self.mode_b.max_input_length
+        ) and not self.length_specific_bias:
+            args.append(f"length_specific_bias={self.length_specific_bias}")
+        if self.bias_mode != "strand":
+            args.append(f"bias_mode={self.bias_mode}")
+        if self.bias_bin != 1:
+            args.append(f"bias_bin={self.bias_bin}")
+
+        out = []
+        temp = ""
+        for i in args:
+            if len(temp) == 0:
+                temp = i
+            elif len(temp) + len(i) + 2 > 60:
+                out.append(temp + ",")
+                temp = i
+            else:
+                temp += ", " + i
+        out.append(temp)
+        return (
+            f"{type(self).__name__}(\n  "
+            + "\n  ".join(_addindent(i, 2) for i in out)  # type: ignore[no-untyped-call]
+            + "\n)"
+        )
+
+    @override
+    def __str__(self) -> str:
+        if self.spacing.name != "":
+            return f"{type(self).__name__}-{self.spacing.name}"
+
+        if self.mode_a.name != "":
+            mode_a = self.mode_a.name
+        elif all(i.layer_spec.name != "" for i in self.mode_a.layers):
+            mode_a = "-".join(i.layer_spec.name for i in self.mode_a.layers)
+        else:
+            mode_a = None
+
+        if self.mode_b.name != "":
+            mode_b = self.mode_b.name
+        elif all(i.layer_spec.name != "" for i in self.mode_b.layers):
+            mode_b = "-".join(i.layer_spec.name for i in self.mode_b.layers)
+        else:
+            mode_b = None
+
+        if mode_a is not None and mode_b is not None:
+            if "-" in mode_a or "-" in mode_b:
+                return f"{type(self).__name__}-[{mode_a}]:[{mode_b}]"
+            return f"{type(self).__name__}-{mode_a}:{mode_b}"
+        return self.__repr__()
 
     @property
     def n_strands(self) -> Literal[1, 2]:

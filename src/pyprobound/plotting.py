@@ -3,6 +3,7 @@
 import copy
 import math
 import warnings
+from collections.abc import Sequence
 from typing import Any, TypeAlias, cast
 
 import logomaker
@@ -211,7 +212,7 @@ def logo(
     # Add title
     title = psam.name
     if reverse:
-        title += ", Reversed"
+        title += " (Reversed)"
     if pairwise:
         fig.suptitle(title, y=1)
     else:
@@ -307,7 +308,7 @@ def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
     # Figure-level labels
     if columns > 1:
         axs[-1].set_xlabel("Position on probe")
-    fig.suptitle(f"{conv1d.layer_spec.name} posbias")
+    fig.suptitle(f"{conv1d.layer_spec.name} Position Bias")
 
     # Draw colorbar
     fig.colorbar(
@@ -349,13 +350,35 @@ def cooperativity(
             .detach()
             .to(device="cpu", dtype=torch.float32)
         )
-        fig.supylabel("-".join([i.name for i in spacing_matrix.mode_key_a]))
-        fig.supxlabel("-".join([i.name for i in spacing_matrix.mode_key_b]))
+
+        if all(i.name != "" for i in spacing_matrix.mode_key_a):
+            mode_a = "-".join(i.name for i in spacing_matrix.mode_key_a)
+            fig.supylabel(
+                f"Mode-[{mode_a}]" if "-" in mode_a else f"Mode-{mode_a}"
+            )
+        else:
+            fig.supylabel("Mode-A")
+
+        if all(i.name != "" for i in spacing_matrix.mode_key_b):
+            mode_b = "-".join(i.name for i in spacing_matrix.mode_key_b)
+            fig.supxlabel(
+                f"Mode-[{mode_b}]" if "-" in mode_b else f"Mode-{mode_b}"
+            )
+        else:
+            fig.supxlabel("Mode-B")
+
     else:
         out = torch.exp(spacing_matrix.get_log_spacing_matrix().detach().cpu())
         out = out[len_a, len_b, :, :, :, :]
-        fig.supylabel(spacing_matrix.mode_a.name)
-        fig.supxlabel(spacing_matrix.mode_b.name)
+
+        if str(spacing_matrix.mode_a) != repr(spacing_matrix.mode_a):
+            fig.supylabel(str(spacing_matrix.mode_a))
+        else:
+            fig.supylabel("Mode-A")
+        if str(spacing_matrix.mode_b) != repr(spacing_matrix.mode_b):
+            fig.supxlabel(str(spacing_matrix.mode_b))
+        else:
+            fig.supxlabel("Mode-B")
 
     # Draw subplots
     max_val = max(np.nanmax(out.log().nan_to_num(0, 0, 0).abs()), 1e-7)
@@ -379,7 +402,8 @@ def cooperativity(
             )
 
     # Label title and axes
-    fig.suptitle(f"{spacing_matrix.name} Spacing")
+    if str(spacing_matrix) != repr(spacing_matrix):
+        fig.suptitle(str(spacing_matrix))
     if spacing_matrix.n_strands == 2:
         axs[0, 0].set_ylabel("Forward")
         axs[1, 0].set_ylabel("Reverse")
@@ -394,7 +418,7 @@ def enrichment_plotter(
     ax: Axes,
     counts_obs: Tensor,
     counts_pred: Tensor,
-    columns: list[int],
+    columns: Sequence[int],
     kernel: int = 1,
     title: str = "",
     **kwargs: Any,
@@ -520,7 +544,7 @@ def enrichment_plotter(
 def probe_enrichment(
     experiment: Experiment,
     batch: CountBatch,
-    columns: list[int] | None = None,
+    columns: Sequence[int] | None = None,
     kernel: int = 500,
     max_split: int | None = None,
 ) -> None:
@@ -552,7 +576,7 @@ def probe_enrichment(
 def kmer_enrichment(
     experiment: Experiment,
     batch: CountBatch,
-    columns: list[int] | None = None,
+    columns: Sequence[int] | None = None,
     kmer_length: int = 3,
     kernel: int = 500,
     max_split: int | None = None,
@@ -805,9 +829,14 @@ def contribution(
 
     bmd_names: list[str] = []
     bmd_contributions_list: list[Tensor] = []
-    for ctrb in [m for m in rnd.modules() if isinstance(m, Contribution)]:
+    for ctrb_idx, ctrb in enumerate(
+        m for m in rnd.modules() if isinstance(m, Contribution)
+    ):
         bmd = ctrb.binding
-        bmd_names.append("-".join(i.name for i in bmd.key()))
+        if str(bmd) != repr(bmd):
+            bmd_names.append(str(bmd))
+        else:
+            bmd_names.append(f"{type(bmd).__name__}-{ctrb_idx}")
         bmd_contributions_list.append(
             score(ctrb, batch, max_split=max_split)[1].unsqueeze(1)
         )
@@ -857,7 +886,10 @@ def contribution(
     axs[0].get_xaxis().set_visible(False)
 
     # Add title
-    title = f"{rnd} Mode Contributions"
+    if rnd.name != "":
+        title = f"{str(rnd)} Mode Contributions"
+    else:
+        title = f"{type(rnd).__name__} Mode Contributions"
     if kernel > 1:
         title += f" ({len(bin_partition):,} bins of n={kernel})"
     else:

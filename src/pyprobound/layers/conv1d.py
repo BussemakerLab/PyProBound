@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeVar, cast
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
 from .. import __precision__
@@ -55,7 +56,6 @@ class Conv1d(Layer):
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
-        name: str = "",
     ) -> None:
         r"""Initializes the 1d convolution layer.
 
@@ -81,14 +81,12 @@ class Conv1d(Layer):
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
-            name: A string used to describe the 1d convolution layer.
         """
         super().__init__(
             layer_spec=psam,
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
         self.layer_spec: PSAM
 
@@ -140,6 +138,44 @@ class Conv1d(Layer):
             requires_grad=train_posbias,
         )
 
+    @override
+    def __repr__(self) -> str:
+        args = [repr(self.layer_spec)]
+        if (
+            self.min_input_length != self.max_input_length
+            and not self.length_specific_bias
+        ):
+            args.append(f"length_specific_bias={self.length_specific_bias}")
+        if self.bias_mode != "channel":
+            args.append(f"bias_mode={self.bias_mode}")
+        if self.bias_bin != 1:
+            args.append(f"bias_bin={self.bias_bin}")
+        if self.out_channel_indexing is not None:
+            args.append(f"out_channel_indexing={self.out_channel_indexing}")
+        if self.one_hot:
+            args.append(f"one_hot={self.one_hot}")
+        if self.unfold:
+            args.append(f"unfold={self.unfold}")
+
+        out = []
+        temp = ""
+        for i in args:
+            if len(temp) == 0:
+                temp = i
+            elif len(temp) + len(i) + 2 > 60:
+                out.append(temp + ",")
+                temp = i
+            else:
+                temp += ", " + i
+        out.append(temp)
+        if len(out) > 1 or "\n" in out[0]:
+            return (
+                f"{type(self).__name__}(\n  "
+                + "\n  ".join(_addindent(i, 2) for i in out)  # type: ignore[no-untyped-call]
+                + "\n)"
+            )
+        return f"{type(self).__name__}( {out[0]} )"
+
     @classmethod
     def from_psam(
         cls,
@@ -153,7 +189,6 @@ class Conv1d(Layer):
         one_hot: bool = False,
         unfold: bool = False,
         normalize: bool = False,
-        name: str = "",
     ) -> Self:
         r"""Creates a new instance from a PSAM and an input component.
 
@@ -176,7 +211,6 @@ class Conv1d(Layer):
             one_hot: Whether to use one-hot scoring instead of dense.
             unfold: Whether to score using `unfold` or `conv1d` (if `one_hot`).
             normalize: Whether to mean-center `log_posbias` over all windows.
-            name: A string used to describe the 1d convolution layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")
@@ -199,7 +233,6 @@ class Conv1d(Layer):
             one_hot=one_hot,
             unfold=unfold,
             normalize=normalize,
-            name=name,
         )
 
     @property

@@ -44,6 +44,13 @@ class MaxPool1dSpec(LayerSpec):
         self._kernel_size = kernel_size
         self._ceil_mode = ceil_mode
 
+    @override
+    def __repr__(self) -> str:
+        return (
+            type(self).__name__
+            + f"(kernel_size={self.kernel_size}, ceil_mode={self.ceil_mode})"
+        )
+
     @property
     def kernel_size(self) -> int:
         """The size of the sliding window."""
@@ -86,7 +93,6 @@ class MaxPool1d(Layer):
         input_shape: int,
         min_input_length: int,
         max_input_length: int,
-        name: str = "",
     ) -> None:
         """Initializes the maxpooling layer.
 
@@ -97,28 +103,23 @@ class MaxPool1d(Layer):
                 sequence.
             max_input_length: The maximum number of finite elements in an input
                 sequence.
-            name: A string used to describe the maxpooling layer.
         """
         super().__init__(
             layer_spec=layer_spec,
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
         self.layer_spec: MaxPool1dSpec
 
     @classmethod
-    def from_spec(
-        cls, spec: MaxPool1dSpec, prev: Table[Any] | Layer, name: str = ""
-    ) -> Self:
+    def from_spec(cls, spec: MaxPool1dSpec, prev: Table[Any] | Layer) -> Self:
         """Creates a new instance from a specification and an input component.
 
         Args:
             spec: The specification of the maxpooling layer.
             prev: If used as the first layer, the table that will be passed as
                 an input; otherwise, the layer that precedes it.
-            name: A string used to describe the maxpooling layer.
         """
         if isinstance(prev, Layer):
             input_shape = prev.out_len(prev.input_shape, "shape")
@@ -133,7 +134,6 @@ class MaxPool1d(Layer):
             input_shape=input_shape,
             min_input_length=min_input_length,
             max_input_length=max_input_length,
-            name=name,
         )
 
     @override

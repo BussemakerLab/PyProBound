@@ -15,6 +15,7 @@ from typing import Any, Literal, NamedTuple, TypeVar, cast
 
 import torch
 from torch import Tensor
+from torch.nn.modules.module import _addindent
 from typing_extensions import override
 
 from . import __version__
@@ -173,12 +174,25 @@ class Component(torch.nn.Module, abc.ABC):
         self._caches: dict[str, tuple[int | None, Tensor | None]] = {}
 
     @override
-    def __str__(self) -> str:
-        return f"{self.name}{type(self).__name__}"
+    def __repr__(self) -> str:
+        num_components = 0
+        for _ in self.components():
+            num_components += 1
+        if num_components == 0:
+            return f"{type(self).__name__}()"
+        return (
+            f"{type(self).__name__}( [\n  "
+            + "\n  ".join(
+                _addindent(repr(i), 2) + "," for i in self.components()  # type: ignore[no-untyped-call]
+            )
+            + "\n] )"
+        )
 
     @override
-    def __repr__(self) -> str:
-        return self.__str__()
+    def __str__(self) -> str:
+        if self.name != "":
+            return f"{type(self).__name__}-{self.name}"
+        return self.__repr__()
 
     def save(
         self,

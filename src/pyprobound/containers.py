@@ -19,6 +19,7 @@ from typing import TypeVar, cast, overload
 import torch
 from torch import Tensor
 from torch.nn import Parameter
+from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
 from . import __version__
@@ -123,6 +124,14 @@ class TModuleList(torch.nn.Module, MutableSequence[ModuleT]):
     @override
     def __hash__(self) -> int:
         return torch.nn.Module.__hash__(self)
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            "[\n  "
+            + "\n  ".join(_addindent(repr(item), 2) for item in self)  # type: ignore[no-untyped-call]
+            + "\n]"
+        )
 
 
 # pylint: disable-next=abstract-method
@@ -238,6 +247,10 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
     def __hash__(self) -> int:
         return torch.nn.Module.__hash__(self)
 
+    @override
+    def __repr__(self) -> str:
+        return ""
+
 
 # pylint: disable-next=abstract-method
 class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
@@ -305,3 +318,7 @@ class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
     @override
     def __hash__(self) -> int:
         return torch.nn.Module.__hash__(self)
+
+    @override
+    def __repr__(self) -> str:
+        return ""

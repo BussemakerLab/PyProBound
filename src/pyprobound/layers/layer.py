@@ -168,6 +168,16 @@ class Layer(Transform, LengthManager):
         )
 
     @override
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}( {repr(self.layer_spec)} )"
+
+    @override
+    def __str__(self) -> str:
+        if self.layer_spec.name != "":
+            return f"{type(self).__name__}-{self.layer_spec.name}"
+        return self.__repr__()
+
+    @override
     @property
     def out_channels(self) -> int:
         return self.layer_spec.out_channels
