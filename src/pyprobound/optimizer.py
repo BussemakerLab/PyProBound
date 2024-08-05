@@ -21,14 +21,16 @@ from torch.utils.data import DataLoader, Sampler
 from .aggregate import Contribution
 from .base import Call, Spec, Step
 from .layers import Conv1d
-from .loss import Loss, LossModule
+from .loss import BaseLoss, Loss
 from .mode import Mode
-from .table import MultitaskLoader, Table
+from .table import Batch, MultitaskLoader, Table
 from .utils import clear_cache
 
 STDOUT = cast(io.TextIOBase, sys.stdout)
 POSINF = torch.tensor(float("inf"))
-T = TypeVar("T")
+T = TypeVar("T", bound=Batch)
+
+# TODO: update printing
 
 
 def _file_not_empty(path: str | os.PathLike[str] | io.TextIOBase) -> bool:
@@ -39,11 +41,11 @@ def _file_not_empty(path: str | os.PathLike[str] | io.TextIOBase) -> bool:
 
 
 class Optimizer(Generic[T]):
-    """Optimizer of a LossModule."""
+    """Optimizer of a BaseLoss."""
 
     def __init__(
         self,
-        model: LossModule[T],
+        model: BaseLoss[T],
         train_tables: Sequence[Table[T]],
         val_tables: Sequence[Table[T]] | None = None,
         epochs: int = 200,

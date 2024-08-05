@@ -3,7 +3,7 @@
 import abc
 import copy
 import os
-from collections.abc import Callable, Iterable, Iterator, MutableMapping
+from collections.abc import Callable, Iterable, MutableMapping
 from typing import Any, TypeVar
 
 import numpy as np
@@ -16,10 +16,10 @@ from typing_extensions import override
 
 from . import __precision__
 from .aggregate import Aggregate, Contribution
-from .base import Spec
+from .base import Spec, Transform
 from .cooperativity import Cooperativity
 from .layers import Layer
-from .loss import Loss, LossModule
+from .loss import BaseLoss
 from .mode import Mode
 from .optimizer import Optimizer
 from .plotting import gnbu_mod
@@ -30,7 +30,10 @@ from .utils import avg_pool1d, get_split_size
 T = TypeVar("T")
 
 
-class BaseFit(LossModule[CountBatch], abc.ABC):
+# TODO: can this be more generic?
+
+
+class BaseFit(BaseLoss[CountBatch], abc.ABC):
     """Base class for curve fitting to independent validation data."""
 
     scale: torch.nn.Parameter
@@ -85,7 +88,14 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
             sampler_args: Parameters passed to the sampler.
             name: A string used to describe the validation dataset.
         """
-        super().__init__()
+        rnd = copy.deepcopy(rnd).to(device)
+        super().__init__(
+            components=[rnd],
+            lambda_l2=0,
+            lambda_l1=0,
+            exponential_bound=float("inf"),
+            max_split=max_split,
+        )
 
         # Get device
         if device is None:
@@ -101,13 +111,12 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         self.prediction = prediction
         self.observation = observation
         self.train_posbias = train_posbias
-        self.max_split = max_split
         self.checkpoint = checkpoint
         self.device = torch.device(device)
         self.name = name
 
         # Set up round
-        self.round = copy.deepcopy(rnd).to(self.device)
+        self.round = rnd
         self.round.eval()
         self.round.freeze()
         if isinstance(self.round, BaseRound):
@@ -148,7 +157,7 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
             epochs=50,
             patience=3,
             checkpoint=self.checkpoint,
-            device=self.device.type,
+            device=device,
             output=output,
             batch_size=batch_size,
             sampler=sampler,
@@ -160,10 +169,6 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
     @override
     def get_setup_string(self) -> str:
         return ""
-
-    @override
-    def components(self) -> Iterator[BaseRound] | Iterator[Aggregate]:
-        yield self.round
 
     def log_aggregate(self, seqs: Tensor) -> Tensor:
         r"""Calculates the log aggregate :math:`\log Z_i`.
@@ -238,36 +243,16 @@ class BaseFit(LossModule[CountBatch], abc.ABC):
         )
 
     @override
-    def forward(self, batch: Iterable[CountBatch]) -> Loss:
-        """Calculates the mean squared error loss."""
-        curr_mse = torch.tensor(0.0, device=self.device)
-        numel = torch.tensor(0.0, device=self.device)
-
-        for sample in batch:
-            split_size = get_split_size(
-                self.max_embedding_size(),
-                (
-                    len(sample.seqs)
-                    if self.max_split is None
-                    else min(self.max_split, len(sample.seqs))
-                ),
-                self.device,
-            )
-
-            for seqs, target in zip(
-                torch.split(sample.seqs, split_size),
-                torch.split(sample.target, split_size),
-            ):
-                obs, pred, lower_err, upper_err = self.obs_pred(
-                    seqs.to(self.device), target.to(self.device)
-                )
-                loss = torch.square(obs - pred)
-                if lower_err is not None and upper_err is not None:
-                    loss /= abs(upper_err - lower_err) / 2
-                curr_mse += loss.sum()
-                numel += loss.numel()
-
-        return Loss(curr_mse / numel, torch.tensor(0.0))
+    def negloglik(
+        self, transform: Transform, tensors: Iterable[Tensor]
+    ) -> tuple[Tensor, int]:
+        del transform
+        seqs, target = tensors
+        obs, pred, lower_err, upper_err = self.obs_pred(seqs, target)
+        loss = torch.square(obs - pred)
+        if lower_err is not None and upper_err is not None:
+            loss /= abs(upper_err - lower_err) / 2
+        return loss.sum(), loss.numel()
 
     def _plot(
         self,

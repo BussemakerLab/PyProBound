@@ -257,14 +257,11 @@ class Component(torch.nn.Module, abc.ABC):
                 self_attr = get_attr(self, submod_names)
             except AttributeError:
                 continue
-            if self_attr.shape != checkpoint_param.shape:
-                if isinstance(self_attr, torch.nn.Parameter):
-                    checkpoint_param = torch.nn.Parameter(
-                        checkpoint_param, requires_grad=self_attr.requires_grad
-                    )
-                set_attr(self, submod_names, checkpoint_param)
-
-        self.load_state_dict(state_dict, strict=False)
+            if isinstance(self_attr, torch.nn.Parameter):
+                checkpoint_param = torch.nn.Parameter(
+                    checkpoint_param, requires_grad=self_attr.requires_grad
+                )
+            set_attr(self, submod_names, checkpoint_param)
 
     def reload(
         self, checkpoint: torch.serialization.FILE_LIKE

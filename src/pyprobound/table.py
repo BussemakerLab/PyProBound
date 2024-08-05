@@ -40,10 +40,21 @@ from .alphabets import Alphabet
 from .base import Transform
 from .utils import get_split_size
 
-T = TypeVar("T")
+# TODO: why not just use a dataclass? not like CountTable is iterable either
+# probably because doesn't work with Dataset.__getitem__
 
 
-class CountBatch(Protocol):  # pylint: disable=too-few-public-methods
+class Batch(Protocol):  # pylint: disable=too-few-public-methods
+    r"""A protocol for a set of rows from a table."""
+
+    def tensors(self) -> Iterator[Tensor]:
+        """Iterator over elements in batch."""
+
+
+T = TypeVar("T", bound=Batch)
+
+
+class CountBatch(Batch, Protocol):  # pylint: disable=too-few-public-methods
     r"""A protocol for a set of rows from a count table.
 
     Attributes:
@@ -325,11 +336,15 @@ class CountTable(Table[CountBatch]):
             count table, as a count tensor of shape :math:`(\text{rounds})`.
     """
 
-    class _CountBatchTuple(NamedTuple):
+    class CountBatchTuple(NamedTuple):
         """A NamedTuple for a CountBatch"""
 
         seqs: Tensor
         target: Tensor
+
+        def tensors(self) -> Iterator[Tensor]:
+            """Iterator over elements in batch."""
+            return iter(self)
 
     def __init__(
         self,
@@ -604,12 +619,16 @@ class CountTable(Table[CountBatch]):
     @override
     def __getitem__(self, idx: int) -> CountBatch:
         return cast(
-            CountBatch, self._CountBatchTuple(self.seqs[idx], self.target[idx])
+            CountBatch, self.CountBatchTuple(self.seqs[idx], self.target[idx])
         )
 
     @override
     def __len__(self) -> int:
         return len(self.seqs)
+
+    def tensors(self) -> Iterator[Tensor]:
+        """Iterator over elements in batch."""
+        return iter((self.seqs, self.target))
 
 
 class EvenSampler(Sampler[int]):

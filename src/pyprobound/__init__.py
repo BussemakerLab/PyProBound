@@ -23,10 +23,12 @@ __all__ = [
     "Cooperativity",
     "Spacing",
     "Experiment",
+    "BaseLoss",
     "Loss",
-    "LossModule",
     "MultiExperimentLoss",
+    "MultiRoundMSLELoss",
     "Optimizer",
+    "Batch",
     "CountBatch",
     "CountTable",
     "EvenSampler",
@@ -45,10 +47,11 @@ from .aggregate import Aggregate, Contribution
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
 from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
-from .loss import Loss, LossModule, MultiExperimentLoss
+from .loss import BaseLoss, Loss, MultiExperimentLoss, MultiRoundMSLELoss
 from .mode import Mode
 from .optimizer import Optimizer
 from .table import (
+    Batch,
     CountBatch,
     CountTable,
     EvenSampler,
