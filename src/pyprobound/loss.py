@@ -4,6 +4,8 @@ Members are explicitly re-exported in pyprobound.
 """
 
 import abc
+import dataclasses
+import itertools
 from collections.abc import Iterable, Iterator
 from typing import Generic, Literal, NamedTuple, TypeVar, cast
 
@@ -16,7 +18,7 @@ from .base import Component, Transform
 from .containers import TModuleList
 from .experiment import Experiment
 from .layers import PSAM
-from .table import Batch, CountBatch
+from .table import Batch, CountBatch, Table
 from .utils import get_split_size
 
 T = TypeVar("T", bound=Batch)
@@ -105,13 +107,13 @@ class BaseLoss(Component, Generic[T]):
 
     @abc.abstractmethod
     def negloglik(
-        self, transform: Transform, tensors: Iterable[Tensor]
+        self, transform: Transform, batch: T
     ) -> tuple[Tensor, Tensor | float]:
         """Calculates the negative log-likelihood plus a normalization factor.
 
         Args:
-            transform: The component to be scored.
-            tensors: The tensors in a batch.
+            transform: The component used for scoring.
+            batch: The batch to be scored.
 
         Returns:
             A tuple of scalar tensors (negloglik, norm), where negloglik is the
@@ -190,13 +192,12 @@ class BaseLoss(Component, Generic[T]):
         try:
             # Calculate loss for each component
             for transform, batch in zip(self.transforms, batches, strict=True):
-                batchlen = len(next(batch.tensors()))
                 split_size = get_split_size(
                     self.max_embedding_size(),
                     (
-                        batchlen
+                        batch.batchlen()
                         if self.max_split is None
-                        else min(self.max_split, batchlen)
+                        else min(self.max_split, batch.batchlen())
                     ),
                     device,
                 )
@@ -205,12 +206,38 @@ class BaseLoss(Component, Generic[T]):
                 curr_nll = torch.tensor(0.0, device=device)
                 curr_norm = torch.tensor(0.0, device=device)
                 for elements in zip(
-                    *(torch.split(i, split_size) for i in batch.tensors())
+                    *(
+                        (  # Split tensors according to split_size
+                            torch.split(i, split_size)
+                            if isinstance(i, Tensor)
+                            else itertools.repeat(i)
+                        )
+                        for i in (  # Generator of fields in a dataclass
+                            getattr(batch, field.name)
+                            for field in dataclasses.fields(batch)
+                        )
+                    )
                 ):
-                    elements = tuple(i.to(device) for i in elements)
-                    negloglik, norm = self.negloglik(transform, elements)
+                    # Get batch type (Table could inherit from Batch)
+                    batch_type = type(batch)
+                    if issubclass(batch_type, Table):
+                        for base_type in batch_type.__bases__:  # type: ignore[unreachable]
+                            if issubclass(base_type, Batch):
+                                batch_type = base_type
+
+                    # Create new batch, moving fields to device
+                    batch = batch_type(
+                        *(
+                            i.to(device) if isinstance(i, Tensor) else i
+                            for i in elements
+                        )
+                    )
+
+                    # Update nll and norm
+                    negloglik, norm = self.negloglik(transform, batch)
                     curr_nll += negloglik
                     curr_norm += norm
+
                 neglogliks.append(curr_nll / curr_norm)
 
         except ValueError as e:
@@ -375,19 +402,21 @@ class MultiExperimentLoss(BaseLoss[CountBatch]):
 
     @override
     def negloglik(
-        self, transform: Transform, tensors: Iterable[Tensor]
+        self, transform: Transform, batch: CountBatch
     ) -> tuple[Tensor, Tensor]:
-        seqs, target = tensors
         if self.full_loss:
             loglik = (
-                (target * transform(seqs))
-                + (target * torch.log(target.sum(dim=1, keepdim=True)))
-                - target
-                - torch.lgamma(target + 1)
+                (batch.target * transform(batch.seqs))
+                + (
+                    batch.target
+                    * torch.log(batch.target.sum(dim=1, keepdim=True))
+                )
+                - batch.target
+                - torch.lgamma(batch.target + 1)
             )
         else:
-            loglik = target * transform(seqs)
-        return -torch.sum(loglik), torch.sum(target)
+            loglik = batch.target * transform(batch.seqs)
+        return -torch.sum(loglik), torch.sum(batch.target)
 
 
 class MultiRoundMSLELoss(BaseLoss[CountBatch]):
@@ -400,11 +429,10 @@ class MultiRoundMSLELoss(BaseLoss[CountBatch]):
 
     @override
     def negloglik(
-        self, transform: Transform, tensors: Iterable[Tensor]
+        self, transform: Transform, batch: CountBatch
     ) -> tuple[Tensor, int]:
-        seqs, target = tensors
-        assert target.ndim == 2 and target.shape[-1] == 1
+        assert batch.target.ndim == 2 and batch.target.shape[-1] == 1
         assert transform.reference_round is None
-        return (target[:, 0].log() - transform(seqs)).square().sum(), len(
-            target
-        )
+        return torch.sum(
+            torch.square(torch.log(batch.target[:, 0]) - transform(batch.seqs))
+        ), len(batch.target)

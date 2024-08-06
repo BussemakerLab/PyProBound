@@ -23,7 +23,7 @@ from .base import Call, Spec, Step
 from .layers import Conv1d
 from .loss import BaseLoss, Loss
 from .mode import Mode
-from .table import Batch, MultitaskLoader, Table
+from .table import Batch, MultitaskLoader, Table, collate_batch_fn
 from .utils import clear_cache
 
 STDOUT = cast(io.TextIOBase, sys.stdout)
@@ -119,6 +119,7 @@ class Optimizer(Generic[T]):
                         if sampler is not None
                         else None
                     ),
+                    collate_fn=collate_batch_fn,
                 )
                 for table in self.train_tables
             ]
@@ -137,6 +138,7 @@ class Optimizer(Generic[T]):
                             if sampler is not None
                             else None
                         ),
+                        collate_fn=collate_batch_fn,
                     )
                     for table in val_tables
                 ]

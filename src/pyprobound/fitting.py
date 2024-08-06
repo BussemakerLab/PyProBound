@@ -3,7 +3,7 @@
 import abc
 import copy
 import os
-from collections.abc import Callable, Iterable, MutableMapping
+from collections.abc import Callable, MutableMapping
 from typing import Any, TypeVar
 
 import numpy as np
@@ -28,9 +28,6 @@ from .table import CountBatch, CountTable
 from .utils import avg_pool1d, get_split_size
 
 T = TypeVar("T")
-
-
-# TODO: can this be more generic?
 
 
 class BaseFit(BaseLoss[CountBatch], abc.ABC):
@@ -244,11 +241,12 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
 
     @override
     def negloglik(
-        self, transform: Transform, tensors: Iterable[Tensor]
+        self, transform: Transform, batch: CountBatch
     ) -> tuple[Tensor, int]:
         del transform
-        seqs, target = tensors
-        obs, pred, lower_err, upper_err = self.obs_pred(seqs, target)
+        obs, pred, lower_err, upper_err = self.obs_pred(
+            batch.seqs, batch.target
+        )
         loss = torch.square(obs - pred)
         if lower_err is not None and upper_err is not None:
             loss /= abs(upper_err - lower_err) / 2

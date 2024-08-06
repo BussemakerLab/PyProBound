@@ -18,13 +18,14 @@ prepended and appended, respectively, to every sequence in the table.
 """
 
 import abc
+import dataclasses
 import functools
 import gzip
 import itertools
 import os
 import warnings
-from collections.abc import Callable, Iterable, Iterator, Sized
-from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast
+from collections.abc import Callable, Iterable, Iterator, Sequence, Sized
+from typing import Any, Generic, TypeVar, cast
 
 import numpy as np
 import pandas as pd
@@ -33,6 +34,7 @@ import torch.nn.functional as F
 from pandas import DataFrame
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Sampler, SubsetRandomSampler
+from torch.utils.data._utils.collate import collate, default_collate_fn_map
 from typing_extensions import override
 
 from . import __precision__
@@ -40,21 +42,22 @@ from .alphabets import Alphabet
 from .base import Transform
 from .utils import get_split_size
 
-# TODO: why not just use a dataclass? not like CountTable is iterable either
-# probably because doesn't work with Dataset.__getitem__
 
-
-class Batch(Protocol):  # pylint: disable=too-few-public-methods
+# Use dataclass instead of NamedTuple to handle inheritance
+@dataclasses.dataclass
+class Batch(abc.ABC):
     r"""A protocol for a set of rows from a table."""
 
-    def tensors(self) -> Iterator[Tensor]:
-        """Iterator over elements in batch."""
+    @abc.abstractmethod
+    def batchlen(self) -> int:
+        """Batch length."""
 
 
 T = TypeVar("T", bound=Batch)
 
 
-class CountBatch(Batch, Protocol):  # pylint: disable=too-few-public-methods
+@dataclasses.dataclass
+class CountBatch(Batch):
     r"""A protocol for a set of rows from a count table.
 
     Attributes:
@@ -67,6 +70,29 @@ class CountBatch(Batch, Protocol):  # pylint: disable=too-few-public-methods
 
     seqs: Tensor
     target: Tensor
+
+    @override
+    def batchlen(self) -> int:
+        return len(self.seqs)
+
+
+def collate_batch_fn(
+    batch: Sequence[Batch], *, collate_fn_map: Any = None
+) -> Batch:
+    """Merges a sequence of Batches into a single Batch."""
+    elem = batch[0]
+    return type(elem)(
+        *(
+            collate(
+                [getattr(d, field.name) for d in batch],
+                collate_fn_map=collate_fn_map,
+            )
+            for field in dataclasses.fields(elem)
+        )
+    )
+
+
+default_collate_fn_map[Batch] = collate_batch_fn
 
 
 def score(
@@ -236,7 +262,7 @@ def sample_counts(
     return dataframe[dataframe.sum(axis=1) != 0]
 
 
-class Table(Dataset[T], Generic[T], Sized, abc.ABC):
+class Table(Dataset[T], Sized, abc.ABC):
     """A generic tensor encoding of a table, should implement flank management.
 
     Attributes:
@@ -319,7 +345,7 @@ class Table(Dataset[T], Generic[T], Sized, abc.ABC):
         """
 
 
-class CountTable(Table[CountBatch]):
+class CountTable(Table[CountBatch], CountBatch):
     r"""A tensor encoding of a count table with flank management.
 
     Attributes:
@@ -335,16 +361,6 @@ class CountTable(Table[CountBatch]):
         counts_per_round (Tensor): The number of probes in each round of the
             count table, as a count tensor of shape :math:`(\text{rounds})`.
     """
-
-    class CountBatchTuple(NamedTuple):
-        """A NamedTuple for a CountBatch"""
-
-        seqs: Tensor
-        target: Tensor
-
-        def tensors(self) -> Iterator[Tensor]:
-            """Iterator over elements in batch."""
-            return iter(self)
 
     def __init__(
         self,
@@ -618,17 +634,11 @@ class CountTable(Table[CountBatch]):
 
     @override
     def __getitem__(self, idx: int) -> CountBatch:
-        return cast(
-            CountBatch, self.CountBatchTuple(self.seqs[idx], self.target[idx])
-        )
+        return CountBatch(self.seqs[idx], self.target[idx])
 
     @override
     def __len__(self) -> int:
         return len(self.seqs)
-
-    def tensors(self) -> Iterator[Tensor]:
-        """Iterator over elements in batch."""
-        return iter((self.seqs, self.target))
 
 
 class EvenSampler(Sampler[int]):
