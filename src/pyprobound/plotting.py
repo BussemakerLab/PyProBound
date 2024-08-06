@@ -228,11 +228,11 @@ def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
         indices = [
             i
             for i, layer in enumerate(conv1d.layers)
-            if isinstance(layer, Conv1d)
+            if isinstance(layer, (Conv1d, Conv0d))
         ]
         if len(indices) != 1:
             raise ValueError(
-                f"Mode {conv1d} does not have exactly 1 Conv1d layers"
+                f"Mode {conv1d} does not have exactly 1 Conv0d/Conv1d layers"
             )
         conv1d = cast(Conv1d, conv1d.layers[indices[0]])
 
