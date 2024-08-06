@@ -114,9 +114,7 @@ class Conv0d(Layer):
         self.train_posbias = train_posbias
         n_lengths = self.max_input_length - self.min_input_length + 1
         self.log_posbias = torch.nn.Parameter(
-            torch.zeros(
-                size=(n_lengths, self.out_channels, 1), dtype=__precision__
-            ),
+            torch.zeros(size=(n_lengths, 1, 1), dtype=__precision__),
             requires_grad=train_posbias,
         )
 
@@ -246,9 +244,10 @@ class Conv0d(Layer):
         """
         lengths = self.lengths(seqs)
         if self.layer_spec.ignore_length:
-            out = torch.zeros_like(lengths).unsqueeze(1).unsqueeze(1)
+            out = torch.zeros_like(lengths, dtype=__precision__)
         else:
-            out = torch.log(lengths).unsqueeze(1).unsqueeze(1)
+            out = torch.log(lengths).to(__precision__)
+        out = out.unsqueeze(1).unsqueeze(1)
         if self.log_posbias.requires_grad or torch.any(self.log_posbias != 0):
             out += self.get_log_posbias()[lengths]
         return out
