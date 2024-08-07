@@ -79,6 +79,11 @@ class TestCaching(unittest.TestCase):
             ]
         )
 
+        # Give a unique name to every submodule
+        for idx, module in enumerate(self.model.modules()):
+            if isinstance(module, pyprobound.Component):
+                module.name = str(idx)
+
     def test_caching(self) -> None:
         with self.assertLogs("pyprobound", "INFO") as logger:
             self.model(self.count_tables)

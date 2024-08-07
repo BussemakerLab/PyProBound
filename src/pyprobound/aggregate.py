@@ -64,7 +64,13 @@ class Contribution(Transform):
 
     @override
     def __repr__(self) -> str:
-        return f"{type(self).__name__}( " + repr(self.binding) + " )"
+        return f"{type(self).__name__}( {repr(self.binding)} )"
+
+    @override
+    def __str__(self) -> str:
+        if self.name != "":
+            return f"{type(self).__name__}-{self.name}"
+        return f"{type(self).__name__}( {str(self.binding)} )"
 
     @override
     def components(self) -> Iterator[Binding]:

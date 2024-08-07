@@ -123,17 +123,29 @@ class BaseLoss(Component, Generic[T]):
 
     def get_setup_string(self) -> str:
         """A description used when printing the output of an optimizer."""
-        return "\n".join(
-            (
-                "### Regularization:",
-                f"\t L1 Lambda: {self.lambda_l1}",
-                f"\t L2 Lambda: {self.lambda_l2}",
-                f"\t Exponential Bound: {self.exponential_bound}",
-                f"\t Excluded Reg.: {self.exclude_regularization}",
-                f"\t Eq. Contribution: {self.equalize_contribution}",
-                f"\t Weights: {self.weights}",
-            )
-        )
+        out = [
+            "### Regularization:",
+            f"\t L1 Lambda: {self.lambda_l1}",
+            f"\t L2 Lambda: {self.lambda_l2}",
+            f"\t Exponential Bound: {self.exponential_bound}",
+            f"\t Excluded Reg.: {self.exclude_regularization}",
+            f"\t Eq. Contribution: {self.equalize_contribution}",
+            f"\t Weights: {self.weights}",
+        ]
+
+        out.append("\n### Transforms:")
+        for transform in self.transforms:
+            out.append(f"\t{str(transform)}")
+
+        out.append("\n### Binding:")
+        for binding_idx, (binding, _) in enumerate(
+            self.optim_procedure().items()
+        ):
+            binding_str = "-".join(str(i) for i in binding)
+            binding_str = binding_str.replace("\n", "\n\t\t")
+            out.extend([f"\t Mode {binding_idx}: {binding_str}"])
+
+        return "\n".join(out)
 
     def regularization(self, component: Component) -> Tensor:
         """Calculates parameter regularization.
@@ -337,36 +349,6 @@ class MultiExperimentLoss(BaseLoss[CountBatch]):
         object.__setattr__(  # Equiv. to `self.experiments = self.transforms`
             self, "experiments", self.transforms
         )
-
-    @override
-    def get_setup_string(self) -> str:
-        out = [
-            super().get_setup_string()
-            + f"\n\t Pseudocount: {self.pseudocount}"
-        ]
-
-        out.append("\n### Experiments:")
-        for expt in self.transforms:
-            round_format = [
-                str(rnd) if rnd in expt.observed_rounds else f"({str(rnd)})"
-                for rnd in expt.rounds
-            ]
-            out.extend(
-                [
-                    f"\tExperiment: {str(expt)}",
-                    f"\t\tRounds: [{', '.join(round_format)}]",
-                ]
-            )
-
-        out.append("\n### Binding Transforms:")
-        for binding_idx, (binding, optim) in enumerate(
-            self.optim_procedure().items()
-        ):
-            out.extend([f"\t Mode {binding_idx}: {binding}"])
-            for ancestors in optim.ancestry:
-                out.append(f"\t\t{ancestors[-2]}")
-
-        return "\n".join(out)
 
     @override
     def regularization(self, component: Component) -> Tensor:

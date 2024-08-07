@@ -19,7 +19,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Sampler
 
 from .aggregate import Contribution
-from .base import Call, Spec, Step
+from .base import Call, Component, Spec, Step
 from .layers import Conv1d
 from .loss import BaseLoss, Loss
 from .mode import Mode
@@ -29,8 +29,6 @@ from .utils import clear_cache
 STDOUT = cast(io.TextIOBase, sys.stdout)
 POSINF = torch.tensor(float("inf"))
 T = TypeVar("T", bound=Batch)
-
-# TODO: update printing
 
 
 def _file_not_empty(path: str | os.PathLike[str] | io.TextIOBase) -> bool:
@@ -557,8 +555,18 @@ class Optimizer(Generic[T]):
         for call_idx, call in enumerate(step.calls):
             # Print call
             pad = "\t" if call_idx == 0 else "\t\t"
-            parameters = ", ".join(f"{k}={v}" for k, v in call.kwargs.items())
-            self.print(f"{pad}{call.cmpt}.{call.fun}({parameters})")
+            key_val_pairs = []
+            for k, v in call.kwargs.items():
+                if str(v) != repr(v) or not isinstance(v, Component):
+                    key_val_pairs.append(f"{k}={v}")
+                else:
+                    key_val_pairs.append(f"k={type(v).__name__}")
+            parameters = ", ".join(key_val_pairs)
+            if str(call.cmpt) != repr(call.cmpt):
+                cmpt_str = str(call.cmpt)
+            else:
+                cmpt_str = type(call.cmpt).__name__
+            self.print(f"{pad}{cmpt_str}.{call.fun}({parameters})")
 
             # Run call
             if call.fun == "update_read_length":
@@ -715,8 +723,6 @@ class Optimizer(Generic[T]):
             )
 
             self.print(f"\n### Training Mode {binding_idx}: {key_str}")
-            for ancestors in binding_optim.ancestry:
-                self.print(f"\t{' → '.join(str(i) for i in ancestors)}")
 
             best_loss = POSINF
             self.save(self.checkpoint)
