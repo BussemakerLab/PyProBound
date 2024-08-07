@@ -1,4 +1,4 @@
-"""Optimizer of LossModules.
+"""Optimizer of BaseLoss.
 
 Members are explicitly re-exported in pyprobound.
 """

@@ -30,6 +30,7 @@ An overview of ProBound and PyProBound is provided in the :doc:`User Guide <User
    GR
    Src
    Src_earlystop
+   CEBPg_PBM
 
 .. toctree::
    :caption: API
