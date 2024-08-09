@@ -5,7 +5,7 @@ Members are explicitly re-exported in pyprobound.layers.
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeVar, overload
+from typing import Any, Literal, TypeVar, cast, overload
 
 import torch
 from torch import Tensor
@@ -44,7 +44,7 @@ class ModuleSpec(LayerSpec):
         self.alphabet = alphabet
 
     @override
-    def unfreeze(self, parameter="all") -> None:
+    def unfreeze(self, parameter: LayerSpec.unfreezable = "all") -> None:
         if parameter == "all":
             for p in self.module.parameters():
                 p.requires_grad_()
@@ -146,4 +146,4 @@ class ModuleLayer(Layer):
         """
         if seqs.ndim == 2:
             seqs = self.layer_spec.alphabet.embed(seqs)
-        return self.layer_spec.module(seqs)
+        return cast(Tensor, self.layer_spec.module(seqs))

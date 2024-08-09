@@ -1,6 +1,7 @@
 """Typed helper functions."""
 
-from typing import Hashable, Iterable, Sequence, overload
+from collections.abc import Hashable, Iterable, Sequence
+from typing import overload
 
 import torch
 import torch.mps

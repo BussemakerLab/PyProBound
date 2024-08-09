@@ -4,12 +4,14 @@ import abc
 import copy
 import os
 from collections.abc import Callable, MutableMapping
-from typing import Any, TypeVar
+from typing import Any, TypeAlias, TypeVar, cast
 
 import numpy as np
 import scipy
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from numpy.typing import NDArray
 from torch import Tensor
 from torch.utils.data import Sampler
 from typing_extensions import override
@@ -28,6 +30,7 @@ from .table import CountBatch, CountTable
 from .utils import avg_pool1d, get_split_size
 
 T = TypeVar("T")
+AxesArray: TypeAlias = NDArray[Any]
 
 
 class BaseFit(BaseLoss[CountBatch], abc.ABC):
@@ -280,9 +283,10 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
                 gridspec_kw={"width_ratios": [5, 0.5]},
                 constrained_layout=True,
             )
+            axs = cast(AxesArray, axs)
             axs[1].axis("off")
         else:
-            fig, axs = plt.subplots(figsize=(5, 5), constrained_layout=True)
+            fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
 
         if pred.min() <= 0 or obs.min() <= 0:
             xlog, ylog = False, False
@@ -298,6 +302,7 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
         # Plot data
         scatter_label = f"$r_s$ ={spearman:.3f}, $r$ ={pearson:.3f}"
         if hexbin:
+            axs = cast(AxesArray, axs)
             binplot = axs[0].hexbin(
                 pred,
                 obs,
@@ -310,12 +315,12 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
             fig.colorbar(binplot, ax=axs[1], fraction=1, pad=0)
         else:
             if err is None:
-                axs.scatter(
+                ax.scatter(
                     pred, obs, label=scatter_label, alpha=0.5, color=colors
                 )
             else:
                 if colors is None:
-                    axs.errorbar(
+                    ax.errorbar(
                         pred.numpy(),
                         obs.numpy(),
                         yerr=err.numpy(),
@@ -328,7 +333,7 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
                     for i, (p, o, e, c) in enumerate(
                         zip(pred, obs, err.T, colors)
                     ):
-                        axs.errorbar(
+                        ax.errorbar(
                             p,
                             o,
                             yerr=e.unsqueeze(-1),
@@ -344,7 +349,7 @@ class BaseFit(BaseLoss[CountBatch], abc.ABC):
                 plt.yscale("log")
 
         # Set limits
-        curr_ax = axs[0] if hexbin else axs
+        curr_ax = cast(Axes, cast(AxesArray, axs)[0]) if hexbin else ax
         min_range = min(curr_ax.get_xlim()[0], curr_ax.get_ylim()[0])
         max_range = max(curr_ax.get_xlim()[1], curr_ax.get_ylim()[1])
         curr_ax.set_xlim(min_range, max_range)

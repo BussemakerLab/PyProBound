@@ -263,25 +263,28 @@ class BaseLoss(Component, Generic[T]):
         weights = self.weights
         if self.equalize_contribution:
             with torch.inference_mode():
-                sum_neglogliks = sum(nll.item() for nll in neglogliks)
-                sum_weights = sum(weights)
+                old_sum = sum(
+                    w * nll.item() for w, nll in zip(weights, neglogliks)
+                )
                 weights = [
-                    (weight / sum_weights)
-                    * (sum_neglogliks / cast(float, loss.item()))
-                    for weight, loss in zip(weights, neglogliks)
+                    w / nll.item() for w, nll in zip(weights, neglogliks)
                 ]
+                new_sum = sum(
+                    w * nll.item() for w, nll in zip(weights, neglogliks)
+                )
+                weights = [w * old_sum / new_sum for w in weights]
 
         # Get regularization
         if self.dilute_regularization:
             regularization: Tensor | Literal[0] = self.regularization(self)
         else:
             regularization = sum(
-                norm * self.regularization(transform)
-                for norm, transform in zip(weights, self.transforms)
+                w * self.regularization(transform)
+                for w, transform in zip(weights, self.transforms)
             )
 
         # Multiply losses by weights
-        final_nll = sum(norm * nll for norm, nll in zip(weights, neglogliks))
+        final_nll = sum(w * nll for w, nll in zip(weights, neglogliks))
         return Loss(cast(Tensor, final_nll), cast(Tensor, regularization))
 
     @override

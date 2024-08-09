@@ -122,7 +122,7 @@ def pairwise_plotter(
 
     # Create empty heatmap matrix
     heatmap = np.empty((size * in_channels, size * in_channels))
-    heatmap[:] = np.NaN
+    heatmap[:] = float("nan")
 
     # Fill heatmap matrix
     for dist in range(1, len(matrices)):
@@ -199,7 +199,6 @@ def logo(
         axs[1, 1].axis("off")
     else:
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(width, logo_height))
-        ax = cast(Axes, ax)
 
     # Create monomer logo
     logomaker_plotter(axs[0, 0] if pairwise else ax, psam, reverse)
@@ -385,19 +384,21 @@ def cooperativity(
     norm = matplotlib.colors.LogNorm(
         vmin=np.exp(-max_val), vmax=np.exp(max_val)
     )
-    for ax_0, strand_0 in zip(ax, out):
-        for ax, strand_1 in zip(ax_0, strand_0):
-            heatmap = ax.imshow(
+    for ax_0, strand_0 in zip(axs, out):
+        ax_0 = cast(AxesArray, ax_0)
+        for ax_1, strand_1 in zip(ax_0, strand_0):
+            ax_1 = cast(Axes, ax_1)
+            heatmap = ax_1.imshow(
                 strand_1,
                 interpolation="none",
                 cmap=cmap,
                 norm=norm,
                 aspect="equal",
             )
-            ax.xaxis.set_major_locator(
+            ax_1.xaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(integer=True)
             )
-            ax.yaxis.set_major_locator(
+            ax_1.yaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(integer=True)
             )
 
@@ -729,8 +730,7 @@ def keff_consistency(
             if isinstance(rnd, ExponentialRound)
         ]
 
-    _, ax = plt.subplots(figsize=(6, 3), constrained_layout=True)
-    axs = cast(Axes, ax)
+    _, axs = plt.subplots(figsize=(6, 3), constrained_layout=True)
 
     # Get counts of all rounds
     counts_obs, counts_pred = score(experiment, batch, max_split=max_split)

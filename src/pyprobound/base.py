@@ -274,11 +274,14 @@ class Component(torch.nn.Module, abc.ABC):
         Returns:
             The metadata field of the checkpoint file.
         """
+        for parameter in self.parameters():
+            device = parameter.device
         checkpoint_state: dict[str, Any] = torch.load(
-            checkpoint, weights_only=True
+            checkpoint, weights_only=True, map_location=torch.device("cpu")
         )
         checkpoint_state_dict: dict[str, Any] = checkpoint_state["state_dict"]
         self.reload_from_state_dict(checkpoint_state_dict)
+        self.to(device)
         return cast(dict[str, Any], checkpoint_state["metadata"])
 
     @abc.abstractmethod
