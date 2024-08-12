@@ -96,11 +96,10 @@ class Mode(Binding, LengthManager):
     def __str__(self) -> str:
         if self.name != "":
             return super().__str__()
-        if all(i.layer_spec.name != "" for i in self.layers):
-            layer_str = "-".join(i.layer_spec.name for i in self.layers)
-            if "-" in layer_str:
-                return f"{type(self).__name__}-[{layer_str}]"
-            return f"{type(self).__name__}-{layer_str}"
+        if str(self.key()) != repr(self.key()):
+            return str(self.key()).replace(
+                type(self.key()).__name__, type(self).__name__
+            )
         return self.__repr__()
 
     @override

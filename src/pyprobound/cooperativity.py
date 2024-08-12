@@ -140,13 +140,15 @@ class Spacing(Spec):
     def __str__(self) -> str:
         if self.name != "":
             return f"{type(self).__name__}-{self.name}"
-        if all(i.name != "" for i in self.mode_key_a) and all(
-            i.name != "" for i in self.mode_key_b
-        ):
-            mode_a = "-".join(i.name for i in self.mode_key_a)
-            mode_b = "-".join(i.name for i in self.mode_key_b)
-            if "-" in mode_a or "-" in mode_b:
-                return f"{type(self).__name__}-[{mode_a}]:[{mode_b}]"
+        if str(self.mode_key_a) != repr(self.mode_key_a) and str(
+            self.mode_key_b
+        ) != repr(self.mode_key_b):
+            mode_a = str(self.mode_key_a).replace(
+                type(self.mode_key_a).__name__ + "-", ""
+            )
+            mode_b = str(self.mode_key_b).replace(
+                type(self.mode_key_b).__name__ + "-", ""
+            )
             return f"{type(self).__name__}-{mode_a}:{mode_b}"
         return self.__repr__()
 
@@ -574,23 +576,15 @@ class Cooperativity(Binding):
         if self.spacing.name != "":
             return f"{type(self).__name__}-{self.spacing.name}"
 
-        if self.mode_a.name != "":
-            mode_a = self.mode_a.name
-        elif all(i.layer_spec.name != "" for i in self.mode_a.layers):
-            mode_a = "-".join(i.layer_spec.name for i in self.mode_a.layers)
-        else:
-            mode_a = None
-
-        if self.mode_b.name != "":
-            mode_b = self.mode_b.name
-        elif all(i.layer_spec.name != "" for i in self.mode_b.layers):
-            mode_b = "-".join(i.layer_spec.name for i in self.mode_b.layers)
-        else:
-            mode_b = None
-
-        if mode_a is not None and mode_b is not None:
-            if "-" in mode_a or "-" in mode_b:
-                return f"{type(self).__name__}-[{mode_a}]:[{mode_b}]"
+        if str(self.mode_a) != repr(self.mode_a) and str(self.mode_b) != repr(
+            self.mode_b
+        ):
+            mode_a = str(self.mode_a).replace(
+                type(self.mode_a).__name__ + "-", ""
+            )
+            mode_b = str(self.mode_b).replace(
+                type(self.mode_b).__name__ + "-", ""
+            )
             return f"{type(self).__name__}-{mode_a}:{mode_b}"
         return self.__repr__()
 

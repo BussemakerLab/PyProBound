@@ -3,8 +3,8 @@
 import copy
 import math
 import warnings
-from collections.abc import Sequence
-from typing import Any, TypeAlias, cast
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, TypeAlias, cast
 
 import logomaker
 import matplotlib
@@ -16,13 +16,15 @@ import scipy
 import torch
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from numpy.typing import NDArray
+from pandas import DataFrame
 from torch import Tensor
 
 from .aggregate import Aggregate, Contribution
 from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
-from .layers import PSAM, Conv0d, Conv1d
+from .layers import PSAM, Conv0d, Conv1d, ModeKey
 from .mode import Mode
 from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
@@ -218,12 +220,137 @@ def logo(
         plt.title(title)
 
 
-def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
+def plot_ticks(
+    ax: Axes, labels: Sequence[str], axis: Literal["x", "y"]
+) -> Axes:
+    """Add tick labels using MaxNLocator(integer=True)."""
+    if axis == "x":
+        ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+    else:
+        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+        ticks = [p for p in ax.get_yticks() if 0 <= p < len(labels)]
+        ax.set_yticks(ticks, [labels[int(i)] for i in ticks])
+    return ax
+
+
+def heatmap_plotter(
+    dataframes: Mapping[str, DataFrame], title: str = ""
+) -> Figure:
+    r"""Plots a mapping of dataframes as a series of heatmaps.
+
+    Args:
+        dataframes: A mapping of names to dataframes.
+        title: The plot title.
+    """
+    # Create colornorm
+    max_val = max(
+        max(np.nanmax(np.abs(df)) for df in dataframes.values()), 1e-7
+    )
+    norm = matplotlib.colors.LogNorm(
+        vmin=np.exp(-max_val), vmax=np.exp(max_val)
+    )
+
+    # Create figure
+    rows = sum(df.shape[0] for df in dataframes.values())
+    columns = max(df.shape[-1] for df in dataframes.values())
+    figsize: tuple[float, float] = (
+        min(max(columns, 2), 10),
+        min(max(rows, 2), 10),
+    )
+    if len(dataframes) > 1:
+        figsize = (figsize[0], 1.5 * figsize[1])
+    fig, ax = plt.subplots(
+        nrows=len(dataframes),
+        figsize=figsize,
+        sharex=True,
+        constrained_layout=True,
+    )
+    if len(dataframes) == 1:
+        ax = np.array([ax])
+    axs = cast(AxesArray, ax)
+
+    # Add each dataframe to figure
+    for (name, df), ax in zip(dataframes.items(), axs):
+        ax = cast(Axes, ax)
+
+        # Plot dataframe
+        heatmap = ax.imshow(
+            df, interpolation="none", cmap=cmap, norm=norm, aspect="auto"
+        )
+
+        # Add title
+        if len(dataframes) > 1:
+            ax.set_title(name)
+
+        # Add x tick labels
+        if columns > 1:
+            plot_ticks(ax, cast(Sequence[str], df.columns), "x")
+            axs[-1].set_xlabel(df.columns.name)
+        else:
+            ax.set_xticks([])
+
+        # Add y tick labels
+        if df.shape[0] > 1:
+            plot_ticks(ax, cast(Sequence[str], df.index), "y")
+            ax.set_ylabel(df.index.name)
+        else:
+            ax.set_yticks([])
+
+    # Add supertitle and colorbar
+    fig.suptitle(title)
+    fig.colorbar(
+        heatmap,
+        ax=axs.ravel().tolist(),
+        fraction=1,
+        location="bottom" if rows < columns else "right",
+    )
+
+    return fig
+
+
+def line_plotter(
+    dataframes: Mapping[str, DataFrame], title: str = ""
+) -> Figure:
+    r"""Plots a mapping of dataframes as a line plot.
+
+    Args:
+        dataframes: A mapping of names to dataframes.
+        title: The plot title.
+    """
+    # Create figure
+    fig, ax = plt.subplots(
+        figsize=(5, 3), sharex=True, constrained_layout=True
+    )
+    ax = cast(Axes, ax)
+
+    # Add each dataframe to figure
+    for name, df in dataframes.items():
+        if len(df) > 1:
+            raise ValueError("Cannot plot dataframes of length > 1")
+        ax.plot(df.iloc[0], label=name if len(dataframes) > 1 else None)
+        plot_ticks(ax, cast(Sequence[str], df.columns), "x")
+        ax.set_xlabel(df.columns.name)
+
+    # Add labels
+    fig.suptitle(title)
+    if len(dataframes) > 1:
+        fig.legend(bbox_to_anchor=(1, 0.9), loc="upper left")
+
+    return fig
+
+
+def posbias(
+    conv1d: Conv0d | Conv1d | Mode,
+    mode: Literal["line", "heatmap"] | None = None,
+) -> None:
     r"""Plots the position bias profile :math:`\omega(x)`.
 
     Args:
         conv1d: A component containing a position bias profile.
+        mode: Whether to plot as a line plot or heatmap. If None, defaults to
+            line plot if input has fixed length, otherwise use heatmap.
     """
+    # Get Conv1d layer
     if isinstance(conv1d, Mode):
         indices = [
             i
@@ -236,86 +363,50 @@ def posbias(conv1d: Conv0d | Conv1d | Mode) -> None:
             )
         conv1d = cast(Conv1d, conv1d.layers[indices[0]])
 
+    # Get mode
+    if mode is None:
+        if conv1d.min_input_length == conv1d.max_input_length:
+            mode = "line"
+        else:
+            mode = "heatmap"
+    if mode == "line" and conv1d.min_input_length != conv1d.max_input_length:
+        raise ValueError(
+            "Cannot plot posbias with mode `line` if input has variable length"
+        )
+
     # Get position bias for each output channel
-    out_list = list(
-        conv1d.get_log_posbias()
-        .detach()
-        .to(device="cpu", dtype=torch.float32)
-        .unbind(1)
-    )
-    if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
-        out_list = [out[conv1d.min_input_length :] for out in out_list]
-
-    # Create colornorm
-    max_val = max(max(np.nanmax(out.abs()) for out in out_list), 1e-7)
-    norm = matplotlib.colors.LogNorm(
-        vmin=np.exp(-max_val), vmax=np.exp(max_val)
-    )
-
-    # Create figure
-    rows = sum(len(out) for out in out_list)
-    columns = len(out_list[0][0])
-    figsize = (min(max(columns, 2), 10), 1.5 * min(max(rows, 1.5), 10))
-    if figsize[1] > 2 * figsize[0]:
-        figsize = (figsize[0], 2 * figsize[0])
-    fig, ax = plt.subplots(
-        nrows=len(out_list),
-        figsize=figsize,
-        sharex=True,
-        constrained_layout=True,
-    )
-    if len(out_list) == 1:
-        ax = np.array([ax])
-    axs = cast(AxesArray, ax)
-
-    # Add each output channel to figure
-    for i_out, out in enumerate(out_list):
-        heatmap = axs[i_out].imshow(
-            torch.exp(out),
-            interpolation="none",
-            cmap=cmap,
-            norm=norm,
-            aspect="auto",
+    dataframes = {
+        f"Output channel {i}": pd.DataFrame(t[1:], index=range(1, len(t)))
+        for i, t in enumerate(
+            torch.exp(conv1d.get_log_posbias().detach())
+            .to(device="cpu", dtype=torch.float32)
+            .unbind(1)
         )
-        if len(out_list) > 1:
-            axs[i_out].set_title(f"Out channel {i_out}")
+    }
 
-        # Add tick labels
-        if columns > 1:
-            axs[i_out].xaxis.set_major_locator(
-                matplotlib.ticker.MaxNLocator(integer=True)
-            )
-        else:
-            axs[i_out].set_xticks([])
-        axs[i_out].yaxis.set_major_locator(
-            matplotlib.ticker.MaxNLocator(integer=True)
+    # Use descriptive names `Forward` and `Reverse` if possible
+    if conv1d.layer_spec.out_channels == 2 and conv1d.layer_spec.score_reverse:
+        names = ["Forward", "Reverse"]
+        if conv1d.out_channel_indexing is not None:
+            names = [names[i] for i in conv1d.out_channel_indexing]
+        dataframes = dict(zip(names, dataframes.values()))
+
+    # Update axis names
+    for key, df in dataframes.items():
+        df.index.name = "Probe length"
+        df.columns.name = "Position on probe"
+        if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
+            dataframes[key] = df.iloc[conv1d.min_input_length - 1 :]
+
+    # Plot
+    if mode == "heatmap":
+        heatmap_plotter(
+            dataframes, title=f"{conv1d.layer_spec.name} Position Bias"
         )
-        positions = axs[i_out].get_yticks()
-        step = int(positions[-1] - positions[-2])
-        if step > 0 and (
-            isinstance(conv1d, Conv0d) or conv1d.length_specific_bias
-        ):
-            axs[i_out].set_ylabel("Probe length")
-            positions = range(
-                0, conv1d.max_input_length - conv1d.min_input_length + 1, step
-            )
-            labels = [conv1d.min_input_length + i for i in positions]
-            axs[i_out].set_yticks(positions, labels)
-        else:
-            axs[i_out].set_yticks([])
-
-    # Figure-level labels
-    if columns > 1:
-        axs[-1].set_xlabel("Position on probe")
-    fig.suptitle(f"{conv1d.layer_spec.name} Position Bias")
-
-    # Draw colorbar
-    fig.colorbar(
-        heatmap,
-        ax=axs.ravel().tolist(),
-        fraction=1,
-        location="bottom" if rows < columns else "right",
-    )
+    else:
+        line_plotter(
+            dataframes, title=f"{conv1d.layer_spec.name} Position Bias"
+        )
 
 
 def cooperativity(
@@ -340,7 +431,7 @@ def cooperativity(
         ax = np.array([[ax]])
     axs = cast(AxesArray, ax)
 
-    # Get spacing matrix and axis labels
+    # Get spacing matrix
     if isinstance(spacing_matrix, Spacing):
         out = torch.exp(
             spacing_matrix.get_log_spacing_matrix(
@@ -349,35 +440,23 @@ def cooperativity(
             .detach()
             .to(device="cpu", dtype=torch.float32)
         )
-
-        if all(i.name != "" for i in spacing_matrix.mode_key_a):
-            mode_a = "-".join(i.name for i in spacing_matrix.mode_key_a)
-            fig.supylabel(
-                f"Mode-[{mode_a}]" if "-" in mode_a else f"Mode-{mode_a}"
-            )
-        else:
-            fig.supylabel("Mode-A")
-
-        if all(i.name != "" for i in spacing_matrix.mode_key_b):
-            mode_b = "-".join(i.name for i in spacing_matrix.mode_key_b)
-            fig.supxlabel(
-                f"Mode-[{mode_b}]" if "-" in mode_b else f"Mode-{mode_b}"
-            )
-        else:
-            fig.supxlabel("Mode-B")
-
+        mode_a: Mode | ModeKey = spacing_matrix.mode_key_a
+        mode_b: Mode | ModeKey = spacing_matrix.mode_key_b
     else:
         out = torch.exp(spacing_matrix.get_log_spacing_matrix().detach().cpu())
         out = out[len_a, len_b, :, :, :, :]
+        mode_a = spacing_matrix.mode_a
+        mode_b = spacing_matrix.mode_b
 
-        if str(spacing_matrix.mode_a) != repr(spacing_matrix.mode_a):
-            fig.supylabel(str(spacing_matrix.mode_a))
-        else:
-            fig.supylabel("Mode-A")
-        if str(spacing_matrix.mode_b) != repr(spacing_matrix.mode_b):
-            fig.supxlabel(str(spacing_matrix.mode_b))
-        else:
-            fig.supxlabel("Mode-B")
+    # Set axis labels
+    if str(mode_a) != repr(mode_a):
+        fig.supylabel(str(mode_a))
+    else:
+        fig.supylabel("Mode-A")
+    if str(mode_b) != repr(mode_b):
+        fig.supxlabel(str(mode_b))
+    else:
+        fig.supxlabel("Mode-B")
 
     # Draw subplots
     max_val = max(np.nanmax(out.log().nan_to_num(0, 0, 0).abs()), 1e-7)
@@ -413,6 +492,83 @@ def cooperativity(
 
     # Draw colorbar
     fig.colorbar(heatmap, ax=axs, location="right")
+
+
+def spacing(
+    spacing_matrix: Spacing | Cooperativity, swap: bool = False
+) -> None:
+    r"""Plots the spacing parameter :math:`\omega_{a:b}(x^a, x^b)`.
+
+    Args:
+        spacing_matrix: A component containing the cooperativity position bias.
+        swap: Whether to swap the two binding modes in the plot.
+    """
+    # Get spacing matrix
+    if isinstance(spacing_matrix, Spacing):
+        mode_a: Mode | ModeKey = spacing_matrix.mode_key_a
+        mode_b: Mode | ModeKey = spacing_matrix.mode_key_b
+        max_in_len = min(
+            mode_a.in_len(spacing_matrix.max_num_windows, mode="min"),
+            mode_b.in_len(spacing_matrix.max_num_windows, mode="min"),
+        )
+        n_windows_a = mode_a.out_len(max_in_len)
+        n_windows_b = mode_b.out_len(max_in_len)
+        out = torch.exp(
+            spacing_matrix.get_log_spacing(n_windows_a, n_windows_b)[0]
+            .nan_to_num(neginf=float("nan"))
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+        )
+
+    else:
+        mode_a = spacing_matrix.mode_a
+        mode_b = spacing_matrix.mode_b
+        n_windows_a = spacing_matrix.n_windows_a
+        n_windows_b = spacing_matrix.n_windows_b
+        out = torch.exp(
+            spacing_matrix.get_log_spacing()[0]
+            .nan_to_num(neginf=float("nan"))
+            .detach()
+            .cpu()
+        )
+
+    # Get mode names
+    if str(mode_a) != repr(mode_a):
+        mode_a_str = str(mode_a)
+    else:
+        mode_a_str = "Mode-A"
+    if str(mode_b) != repr(mode_b):
+        mode_b_str = str(mode_b)
+    else:
+        mode_b_str = "Mode-B"
+
+    # Swap modes
+    if swap:
+        out = out.flip(-1)
+        mode_a_str, mode_b_str = mode_b_str, mode_a_str
+        n_windows_a, n_windows_b = n_windows_b, n_windows_a
+
+    # Get dataframes
+    dataframes = {
+        name: pd.DataFrame(
+            t.unsqueeze(0), columns=range(-n_windows_a + 1, n_windows_b)
+        )
+        for name, t in zip(
+            (f"{mode_b_str} Forward", f"{mode_b_str} Reverse"), out.unbind(0)
+        )
+    }
+    for df in dataframes.values():
+        df.columns.name = f"Position of {mode_b_str} relative to {mode_a_str}"
+
+    # Generate plot
+    line_plotter(
+        dataframes,
+        (
+            str(spacing_matrix)
+            if str(spacing_matrix) != repr(spacing_matrix)
+            else ""
+        ),
+    )
 
 
 def enrichment_plotter(

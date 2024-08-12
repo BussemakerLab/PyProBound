@@ -320,6 +320,15 @@ class ModeKey(tuple[LayerSpec], LengthManager):
     """Output of Mode.key() with length calculations."""
 
     @override
+    def __str__(self) -> str:
+        if all(i.name != "" for i in self):
+            layer_str = "-".join(i.name for i in self)
+            if "-" in layer_str:
+                return f"{type(self).__name__}-[{layer_str}]"
+            return f"{type(self).__name__}-{layer_str}"
+        return self.__repr__()
+
+    @override
     @property
     def out_channels(self) -> int:
         return self[-1].out_channels
