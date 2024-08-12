@@ -274,7 +274,11 @@ class Optimizer(Generic[T]):
                     parameters = ", ".join(
                         f"{k}={v}" for k, v in call.kwargs.items()
                     )
-                    out.append(f"\t\t{call.cmpt}.{call.fun}({parameters})")
+                    if str(call.cmpt) != repr(call.cmpt):
+                        cmpt_str = str(call.cmpt)
+                    else:
+                        cmpt_str = type(call.cmpt).__name__
+                    out.append(f"\t\t{cmpt_str}.{call.fun}({parameters})")
         return "\n".join(out)
 
     def print(

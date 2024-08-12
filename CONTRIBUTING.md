@@ -1,6 +1,5 @@
 * The `pyprobound` module is contained in [src/pyprobound](src/pyprobound)
-* Package configuration is found in
-    [pyproject.toml](pyproject.toml) and [setup.cfg](setup.cfg)
+* Package configuration is found in [pyproject.toml](pyproject.toml)
 * You can use `tox`(https://tox.wiki) to automate linting, testing, and docs
 
 # Linters and formatters
@@ -9,10 +8,6 @@
 * [Black](https://black.readthedocs.io)
 * [isort](https://pycqa.github.io/isort)
 * Per-linter settings are specified in [pyproject.toml](pyproject.toml)
-
-# Unit testing
-* Run all unit tests in [test](test)
-    by running `python -m unittest` from the root directory
 
 # Docs
 * Docs are built in [Sphinx](https://www.sphinx-doc.org)

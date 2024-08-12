@@ -439,8 +439,10 @@ class Transform(Component):
             ptr, output = self._caches.get(fun.__name__, (None, None))
             if output is not None:
                 if ptr != data_ptr:
+                    self._release_block()
                     raise RuntimeError(
-                        "Cached input pointer does not match current input"
+                        "Cached input pointer does not match current input;"
+                        " attempting self._release_block()"
                     )
                 logger.info("Returning cache of %s.%s", self, fun.__name__)
                 return output
@@ -473,6 +475,14 @@ class Spec(Component):
     @override
     def components(self) -> Iterator[Component]:
         return iter(())
+
+    @override
+    def forward(self) -> None:  # pylint: disable=missing-function-docstring
+        raise NotImplementedError(
+            f"{type(self).__name__} stores experiment-independent parameters;"
+            " forward() is only implemented at the experiment-specific level"
+            " (either a Layer or Cooperativity component)."
+        )
 
     def update_binding_optim(
         self, binding_optim: BindingOptim
