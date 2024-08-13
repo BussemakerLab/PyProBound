@@ -462,6 +462,34 @@ class Conv1d(Layer):
             return posbias
         return None
 
+    @staticmethod
+    def _masked_conv1d(
+        seq: Tensor, weight: Tensor, dilation: int = 1
+    ) -> Tensor:
+        """Convolve non-finite inputs without breaking gradient calculation."""
+
+        # https://github.com/pytorch/pytorch/issues/104284
+        # https://github.com/pytorch/pytorch/issues/96225
+        def _conv1d(seq: Tensor, weight: Tensor, dilation: int) -> Tensor:
+            return F.conv3d(
+                seq.unsqueeze(-1).unsqueeze(-1),
+                weight.unsqueeze(-1).unsqueeze(-1),
+                dilation=dilation,
+            ).squeeze(-1, -2)
+
+        return torch.where(
+            torch.isfinite(_conv1d(seq, weight, dilation)),
+            _conv1d(seq.masked_fill(~seq.isfinite(), 0), weight, dilation),
+            float("-inf"),
+        )
+
+    @staticmethod
+    def _masked_mul(seq: Tensor, weight: Tensor) -> Tensor:
+        """Multiply non-finite inputs without breaking gradient calculation."""
+        return (seq.masked_fill(~seq.isfinite(), 0) * weight).masked_fill(
+            ~seq.isfinite(), float("-inf")
+        )
+
     def score_onehot(self, seqs: Tensor) -> Tensor:
         r"""Calculates the log score of each window using convolutions.
 
@@ -492,16 +520,14 @@ class Conv1d(Layer):
             unfold = current.unfold(
                 2, self.layer_spec.dilation * (matrix.shape[2] - 1) + 1, 1
             )[..., :: self.layer_spec.dilation]
-            result = (unfold.unsqueeze(1) * matrix.unsqueeze(2)).sum(2)
+            result = self._masked_mul(
+                unfold.unsqueeze(1), matrix.unsqueeze(2)
+            ).sum(2)
             result = result.sum(3)
         else:
-            # https://github.com/pytorch/pytorch/issues/104284
-            # https://github.com/pytorch/pytorch/issues/96225
-            result = F.conv3d(
-                current.unsqueeze(-1).unsqueeze(-1),
-                matrix.unsqueeze(-1).unsqueeze(-1),
-                dilation=self.layer_spec.dilation,
-            ).squeeze(-1, -2)
+            result = self._masked_conv1d(
+                current, matrix, dilation=self.layer_spec.dilation
+            )
 
         for dist in range(1, self.layer_spec.pairwise_distance + 1):
             matrix = self.layer_spec.get_filter(dist)
@@ -527,15 +553,12 @@ class Conv1d(Layer):
 
             if self.unfold:
                 unfold = current_pairs.unfold(2, matrix.shape[2], 1)
-                temp = (unfold.unsqueeze(1) * matrix.unsqueeze(2)).sum(2)
+                temp = self._masked_mul(
+                    unfold.unsqueeze(1), matrix.unsqueeze(2)
+                ).sum(2)
                 result += temp.sum(3)
             else:
-                # https://github.com/pytorch/pytorch/issues/104284
-                # https://github.com/pytorch/pytorch/issues/96225
-                result += F.conv3d(
-                    current_pairs.unsqueeze(-1).unsqueeze(-1),
-                    matrix.unsqueeze(-1).unsqueeze(-1),
-                ).squeeze(-1, -2)
+                result += self._masked_conv1d(current_pairs, matrix)
 
         # Add in posbias
         posbias = self._get_log_posbias_indexed(seqs)
@@ -546,12 +569,7 @@ class Conv1d(Layer):
         bias = self.layer_spec.get_bias()
         if self.out_channel_indexing is not None:
             bias = bias[self.out_channel_indexing]
-        return (
-            result.nan_to_num(
-                nan=float("-inf"), neginf=float("-inf"), posinf=float("-inf")
-            )
-            + bias
-        )
+        return result + bias
 
     def score_dense(self, seqs: Tensor) -> Tensor:
         r"""Calculates the log score of each window using indexing.

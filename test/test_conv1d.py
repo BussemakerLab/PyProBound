@@ -1,5 +1,7 @@
 # pylint: disable=invalid-name, missing-class-docstring, missing-function-docstring, missing-module-docstring, protected-access
+# mypy: disable-error-code="no-untyped-call"
 import unittest
+from typing import cast
 
 import torch
 from torch import Tensor
@@ -94,16 +96,45 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_dense_v_onehot(self) -> None:
-        self.layer.one_hot = False
-        dense_out = self.layer(self.count_table.seqs)
-        self.layer.one_hot = True
-        onehot_out = self.layer(self.count_table.seqs)
-        self.check_nans(dense_out)
-        self.check_nans(onehot_out)
-        self.assertTrue(
-            torch.allclose(dense_out, onehot_out, atol=1e-6),
-            "dense and one_hot outputs do not match",
-        )
+        with torch.enable_grad():
+            for p in self.layer.parameters():
+                p.requires_grad_()
+            self.layer.one_hot = False
+            dense_out = self.layer(self.count_table.seqs)
+            dense_out.logsumexp(tuple(range(dense_out.ndim))).backward()
+            dense_grad = torch.cat(
+                [
+                    cast(Tensor, p.grad).flatten()
+                    for p in self.layer.parameters()
+                ]
+            )
+
+            self.layer.zero_grad()
+            self.layer.one_hot = True
+            onehot_out = self.layer(self.count_table.seqs)
+            onehot_out.logsumexp(tuple(range(onehot_out.ndim))).backward()
+            onehot_grad = torch.cat(
+                [
+                    cast(Tensor, p.grad).flatten()
+                    for p in self.layer.parameters()
+                ]
+            )
+
+            self.check_nans(dense_out)
+            self.check_nans(onehot_out)
+            self.check_nans(dense_grad)
+            self.check_nans(onehot_grad)
+
+            self.assertTrue(
+                torch.allclose(dense_out, onehot_out, atol=1e-6),
+                "dense and one_hot outputs do not match",
+            )
+            self.assertTrue(
+                torch.allclose(
+                    dense_grad, onehot_grad, atol=1e-6, equal_nan=True
+                ),
+                "dense and one_hot grads do not match",
+            )
 
     def test_forward_v_reverse(self) -> None:
         if self.layer.bias_mode == "same" or self.layer.bias_bin != 1:
@@ -136,19 +167,46 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
         )
 
     def test_conv_v_unfold(self) -> None:
-        self.layer.one_hot = True
+        with torch.enable_grad():
+            for p in self.layer.parameters():
+                p.requires_grad_()
+            self.layer.one_hot = True
+            self.layer.unfold = False
+            conv1d_out = self.layer(self.count_table.seqs)
+            conv1d_out.logsumexp(tuple(range(conv1d_out.ndim))).backward()
+            conv1d_grad = torch.cat(
+                [
+                    cast(Tensor, p.grad).flatten()
+                    for p in self.layer.parameters()
+                ]
+            )
 
-        # test conv
-        self.layer.unfold = False
-        conv1d_out = self.layer(self.count_table.seqs)
-        self.layer.unfold = True
-        unfold_out = self.layer(self.count_table.seqs)
-        self.check_nans(conv1d_out)
-        self.check_nans(unfold_out)
-        self.assertTrue(
-            torch.allclose(conv1d_out, unfold_out, atol=1e-6),
-            "unfold output does not match conv1d output",
-        )
+            self.layer.zero_grad()
+            self.layer.unfold = True
+            unfold_out = self.layer(self.count_table.seqs)
+            unfold_out.logsumexp(tuple(range(unfold_out.ndim))).backward()
+            unfold_grad = torch.cat(
+                [
+                    cast(Tensor, p.grad).flatten()
+                    for p in self.layer.parameters()
+                ]
+            )
+
+            self.check_nans(conv1d_out)
+            self.check_nans(unfold_out)
+            self.check_nans(conv1d_grad)
+            self.check_nans(unfold_grad)
+
+            self.assertTrue(
+                torch.allclose(conv1d_out, unfold_out, atol=1e-6),
+                "conv1d and unfold outputs do not match",
+            )
+            self.assertTrue(
+                torch.allclose(
+                    conv1d_grad, unfold_grad, atol=1e-6, equal_nan=True
+                ),
+                "conv1d and unfold grads do not match",
+            )
 
     def test_shift_footprint(self) -> None:
         del self.count_table[100:]
