@@ -16,6 +16,7 @@ An overview of ProBound and PyProBound is provided in the :doc:`User Guide <User
    :maxdepth: 3
 
    UserGuide
+   AdvancedConfiguration
 
 .. toctree::
    :caption: Examples
@@ -31,6 +32,7 @@ An overview of ProBound and PyProBound is provided in the :doc:`User Guide <User
    Src
    Src_earlystop
    CEBPg_PBM
+   CTCF_ChIP-seq
 
 .. toctree::
    :caption: API
@@ -58,6 +60,6 @@ download directly from the `repository <https://github.com/BussemakerLab/PyProBo
 
    pip install git+https://github.com/BussemakerLab/PyProBound.git
 
-Reference
+References
 ----------
 .. [#Rube2022] Rube, H.T., Rastogi, C., Feng, S. et al. Prediction of protein–ligand binding affinity from sequencing data with interpretable machine learning. Nat Biotechnol 40, 1520–1527 (2022). https://doi.org/10.1038/s41587-022-01307-0

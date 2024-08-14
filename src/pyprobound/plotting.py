@@ -66,7 +66,9 @@ def logomaker_plotter(
     )
     matrix -= matrix.mean(1, keepdims=True)
     matrix = np.flip(matrix, axis=(0, 1)) if reverse else matrix
-    dataframe = pd.DataFrame(matrix, columns=psam.alphabet.alphabet)
+    dataframe = pd.DataFrame(
+        matrix, columns=psam.alphabet.alphabet, dtype=float
+    )
     dataframe.columns = dataframe.columns.astype(str)
 
     # Set font
@@ -376,7 +378,7 @@ def posbias(
 
     # Get position bias for each output channel
     dataframes = {
-        f"Output channel {i}": pd.DataFrame(t[1:], index=range(1, len(t)))
+        f"Output channel {i}": pd.DataFrame(t)
         for i, t in enumerate(
             torch.exp(conv1d.get_log_posbias().detach())
             .to(device="cpu", dtype=torch.float32)
@@ -392,11 +394,12 @@ def posbias(
         dataframes = dict(zip(names, dataframes.values()))
 
     # Update axis names
-    for key, df in dataframes.items():
+    for df in dataframes.values():
         df.index.name = "Probe length"
         df.columns.name = "Position on probe"
         if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
-            dataframes[key] = df.iloc[conv1d.min_input_length - 1 :]
+            df.index = range(len(df))
+            df.drop(range(conv1d.min_input_length), inplace=True)
 
     # Plot
     if mode == "heatmap":

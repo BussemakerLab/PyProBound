@@ -247,10 +247,6 @@ class TParameterList(torch.nn.Module, MutableSequence[Parameter]):
     def __hash__(self) -> int:
         return torch.nn.Module.__hash__(self)
 
-    @override
-    def __repr__(self) -> str:
-        return ""
-
 
 # pylint: disable-next=abstract-method
 class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
@@ -318,7 +314,3 @@ class TParameterDict(torch.nn.Module, MutableMapping[str, Parameter]):
     @override
     def __hash__(self) -> int:
         return torch.nn.Module.__hash__(self)
-
-    @override
-    def __repr__(self) -> str:
-        return ""

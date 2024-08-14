@@ -5,6 +5,10 @@ given the count of each observed sequence across one or more sequential enrichme
 The likelihood is computed by predicting the binding probability of a sequence,
 and from this probability predicting the sequence count across the different enrichment rounds.
 
+This package [#Li2023]_ implements ProBound in Python using PyTorch, which allows for the analysis
+of sequences of varying lengths, among other features. To learn more about PyTorch, check out their
+[Quick Start tutorial](https://pytorch.org/tutorials/beginner/basics/quickstart_tutorial.html).
+
 This User Guide covers all of the core features
 designed into the original implementation of ProBound.
 A simple example can be found in :doc:`CTCF: Single Experiment <_notebooks/CTCF>`.
@@ -99,6 +103,13 @@ PSAMs can be seeded with IUPAC code motifs, and can additionally model pairwise 
 (such as dinucleotides, as well as non-adjacent letter pairs) and palindromic binding.
 One example that uses all of these features is :doc:`CEBPγ: EpiSELEX-seq <_notebooks/CEBPg>`.
 For further information, refer to the :doc:`PSAM API <_autosummary/pyprobound.layers.psam.PSAM>`.
+
+A PSAM can also be imported from external resources, such as
+`MotifCentral <https://motifcentral.org>`_ [#Rube2022]_, as well as `JASPAR <https://jaspar.elixir.no>`_
+and `HOCOMOCO 11 <https://hocomoco11.autosome.org>`_, by using the functions
+:doc:`import_motif_central <_autosummary/pyprobound.external.import_motif_central>`,
+:doc:`import_jaspar <_autosummary/pyprobound.external.import_jaspar>`, and
+:doc:`import_hocomoco <_autosummary/pyprobound.external.import_hocomoco>`, respectively.
 
 Binding Mode
 ^^^^^^^^^^^^
@@ -373,6 +384,34 @@ Now What?
 Since parameters and outputs of these components are in terms of biophysical constants,
 they can be used directly for interpreting experiments and validating against alternative assays.
 
+Re-loading
+^^^^^^^^^^
+Any model component can be checkpointed with
+`save <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.base.Component.html#pyprobound.base.Component.save>`_,
+and reloaded from a checkpoint with
+`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.base.Component.html#pyprobound.base.Component.reload>`_.
+
+If an :doc:`Optimizer <_autosummary/pyprobound.optimizer.Optimizer>` has been previously trained,
+it can similarly be directly reloaded with
+`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.optimizer.Optimizer.html#pyprobound.optimizer.Optimizer.reload>`_.
+
+Scoring
+^^^^^^^
+Sequences that are already encoded in a
+:doc:`CountTable <_autosummary/pyprobound.table.CountTable>` can be directly accessed with the
+:code:`seqs` attribute. Sequences represented as a string can be encoded using
+`translate <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.alphabets.Alphabet.html#pyprobound.alphabets.Alphabet.translate>`_,
+although scoring requires creating a batch-first dimension with
+`unsqueeze <https://pytorch.org/docs/stable/generated/torch.unsqueeze.html#torch.unsqueeze>`_.
+
+Sequences can be directly be scored using the objects created to make the model.
+For example, the output of a :doc:`Mode <_autosummary/pyprobound.mode.Mode>`,
+:math:`-\log K^{rel}_{\text{D}}`, can be estimated for a sequence as 
+
+.. code-block:: python
+
+    negative_log_kd = mode(alphabet.translate("ACGTC").unsqueeze(0))
+
 Plotting
 ^^^^^^^^
 PyProBound includes a plotting library, :code:`pyprobound.plotting`,
@@ -449,7 +488,8 @@ function can be used to plot how well the observed and expected values agree.
 
 For further information, refer to the :doc:`fitting API <_autosummary/pyprobound.fitting>`.
 
-Reference
----------
+References
+----------
 .. [#Rube2022] Rube, H.T., Rastogi, C., Feng, S. et al. Prediction of protein–ligand binding affinity from sequencing data with interpretable machine learning. Nat Biotechnol 40, 1520–1527 (2022). https://doi.org/10.1038/s41587-022-01307-0
+.. [#Li2023] Li, X., Melo, L.A.N., and Bussemaker, H.J. Benchmarking DNA binding affinity models using allele-specific transcription factor binding data. bioRxiv (2023). https://doi.org/10.1038/s41587-022-01307-0
 .. [#Riley2015] Riley, T.R., Lazarovici, A., Mann, R.S., and Bussemaker, H.J. Building accurate sequence-to-affinity models from high-throughput in vitro protein-DNA binding data using FeatureREDUCE. eLife 4:e06397 (2015). https://doi.org/10.7554/eLife.06397 

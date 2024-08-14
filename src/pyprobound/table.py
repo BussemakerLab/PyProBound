@@ -143,15 +143,14 @@ def score(
 
 
 def get_dataframe(
-    paths: list[str],
+    paths: str | list[str],
     total_count: int | None = None,
     random_state: int | None = None,
 ) -> DataFrame:
     """Loads tab-delimited count tables into columns on a Pandas dataframe.
 
     The input count tables are assumed to have a sequence field and a series
-    of count fields, all separated by a tab character.
-    Any initial lines lacking a tab character are skipped.
+    of count fields, all separated by a tab character, with no header.
 
     Args:
         paths: The paths to each count table to be merged into a dataframe.
@@ -164,24 +163,13 @@ def get_dataframe(
         round. Sequences are stored in the index of the dataframe.
     """
 
-    if not isinstance(paths, list):
-        raise TypeError(
-            "paths argument to get_dataframe should be a list of str,"
-            " each a path to a different tsv"
-        )
+    if isinstance(paths, str):
+        paths = [paths]
 
     dataframes: list[DataFrame] = []
     idx = 0
     for idx, path in enumerate(paths):
-        open_fn = gzip.open if os.path.splitext(path)[-1] == ".gz" else open
-        with open_fn(path, "rt", encoding="utf-8") as file_handle:  # type: ignore[operator]
-            skiprows = 0
-            while "\t" not in file_handle.readline():
-                skiprows += 1
-
-        df = pd.read_csv(
-            path, header=None, index_col=0, sep="\t", skiprows=skiprows
-        )
+        df = pd.read_csv(path, header=None, index_col=0, sep="\t")
         if total_count is not None:
             df = sample_counts(df, total_count, random_state)
 
@@ -191,7 +179,11 @@ def get_dataframe(
         dataframes.append(df)
 
     return functools.reduce(
-        lambda df1, df2: df1.join(df2, how="outer").fillna(0).astype(int),
+        lambda df1, df2: df1.merge(
+            df2, how="outer", left_index=True, right_index=True
+        )
+        .fillna(0)
+        .astype(int),
         dataframes,
     )
 
