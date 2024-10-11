@@ -4,13 +4,15 @@ import io
 import json
 import re
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
+import pandas as pd
 import requests
 import torch
 from Bio import motifs
 from Bio.motifs import jaspar
+from numpy.typing import NDArray
 from pandas import DataFrame
 
 from .aggregate import Aggregate, Contribution
@@ -28,6 +30,8 @@ from .rounds import (
     Round,
 )
 from .table import CountTable
+
+FloatArray: TypeAlias = NDArray[Any]
 
 
 def get_fit_final(path: str) -> dict[str, Any]:
@@ -521,6 +525,25 @@ def import_motif_central(fit_id: int) -> PSAM:
     return parse_probound_psam(model, -1)
 
 
+def import_matrix(matrix: FloatArray, alphabet: Alphabet) -> PSAM:
+    """Parses a PSAM from a (alphabet size, length) matrix."""
+    matrix = np.asarray(matrix)
+    if len(matrix) != len(alphabet.alphabet):
+        raise ValueError(
+            f"Second dimension of {matrix}"
+            f" does not match size of alphabet {alphabet}"
+        )
+    psam = PSAM(kernel_size=len(matrix[0]), alphabet=alphabet, normalize=False)
+
+    for key, param in psam.betas.items():
+        elements = [int(i) for i in key.split("-")]
+        elements = [i - 1 for i in elements[:-1]] + elements[-1:]
+        if len(elements) == 2:
+            torch.nn.init.constant_(param, matrix[elements[1]][elements[0]])
+
+    return psam
+
+
 def import_hocomoco(model: str) -> PSAM:
     """Parses a PSAM from a model in HOCOMOCO 11."""
     root = "https://hocomoco11.autosome.org"
@@ -529,19 +552,12 @@ def import_hocomoco(model: str) -> PSAM:
     if match is None:
         raise RuntimeError(f"Could not find HOCOMOCO PWM for {model}")
     text = requests.get(f"{root}/{match.group(0)}", timeout=5).text
-    array = [[float(j) for j in i.split("\t")] for i in text.split("\n")[1:]]
-    array = [[j - max(i) for j in i] for i in array]
-
-    alphabet = DNA()
-    psam = PSAM(kernel_size=len(array), alphabet=alphabet, normalize=False)
-
-    for key, param in psam.betas.items():
-        elements = [int(i) for i in key.split("-")]
-        elements = [i - 1 for i in elements[:-1]] + elements[-1:]
-        if len(elements) == 2:
-            torch.nn.init.constant_(param, array[elements[0]][elements[1]])
-
-    return psam
+    matrix = pd.read_csv(
+        io.StringIO(text), sep="\t", header=None, skiprows=1
+    ).to_numpy()
+    matrix = matrix.T
+    matrix -= matrix.max(axis=0, keepdims=True)
+    return import_matrix(matrix, DNA())
 
 
 def import_jaspar(fit_id: str) -> PSAM:
@@ -551,16 +567,6 @@ def import_jaspar(fit_id: str) -> PSAM:
     ).text
     motif = motifs.read(io.StringIO(text), "jaspar")  # type: ignore[no-untyped-call]
     motif.pseudocounts = jaspar.calculate_pseudocounts(motif)  # type: ignore[no-untyped-call]
-    array = np.array(list(motif.pssm.values())).T / np.log2(np.e)
-    array -= array.max(axis=1, keepdims=True)
-
-    alphabet = DNA()
-    psam = PSAM(kernel_size=len(array), alphabet=alphabet, normalize=False)
-
-    for key, param in psam.betas.items():
-        elements = [int(i) for i in key.split("-")]
-        elements = [i - 1 for i in elements[:-1]] + elements[-1:]
-        if len(elements) == 2:
-            torch.nn.init.constant_(param, array[elements[0]][elements[1]])
-
-    return psam
+    matrix = np.array(list(motif.pssm.values())) / np.log2(np.e)
+    matrix -= matrix.max(axis=0, keepdims=True)
+    return import_matrix(matrix, DNA())

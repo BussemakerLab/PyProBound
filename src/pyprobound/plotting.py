@@ -398,7 +398,7 @@ def posbias(
         df.index.name = "Probe length"
         df.columns.name = "Position on probe"
         if isinstance(conv1d, Conv0d) or conv1d.length_specific_bias:
-            df.index = range(len(df))
+            df.index = range(len(df))  # type: ignore[assignment]
             df.drop(range(conv1d.min_input_length), inplace=True)
 
     # Plot

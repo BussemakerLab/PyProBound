@@ -20,9 +20,7 @@ prepended and appended, respectively, to every sequence in the table.
 import abc
 import dataclasses
 import functools
-import gzip
 import itertools
-import os
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Sequence, Sized
 from typing import Any, Generic, TypeVar, cast
