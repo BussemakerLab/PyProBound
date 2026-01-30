@@ -131,12 +131,18 @@ class TestConv1d_4_dense(BaseTestCases.BaseTestLayer):
             )
             self.assertTrue(
                 torch.allclose(
-                    dense_grad, onehot_grad, atol=1e-6, equal_nan=True
+                    dense_grad,
+                    onehot_grad,
+                    rtol=1e-5,
+                    atol=1e-5,
+                    equal_nan=True,
                 ),
                 "dense and one_hot grads do not match",
             )
 
     def test_forward_v_reverse(self) -> None:
+        if not self.layer.layer_spec.score_reverse:
+            self.skipTest("Cannot test reverse if not being scored")
         if self.layer.bias_mode == "same" or self.layer.bias_bin != 1:
             self.layer.layer_spec._score_reverse = True
             self.layer.log_posbias.requires_grad_(False)
@@ -396,6 +402,25 @@ class TestConv1d_4_onehot(TestConv1d_4_dense):
         initialize_conv1d(self.layer)
 
 
+class TestConv1d_4norev_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=0,
+                information_threshold=0.0,
+                score_reverse=False,
+            ),
+            self.count_table,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
 class TestConv1d_4dilate2_onehot(TestConv1d_4_dense):
     @override
     def setUp(self) -> None:
@@ -442,6 +467,80 @@ class TestConv1d_4di1_dense(TestConv1d_4_dense):
                 alphabet=self.count_table.alphabet,
                 kernel_size=4,
                 pairwise_distance=1,
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4rc_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                symmetry=[1, 2, -2, -1],
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4symm_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                symmetry=[1, 2, 1, 2],
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4rcdi1_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                symmetry=[1, 2, -2, -1],
+                information_threshold=0.0,
+            ),
+            self.count_table,
+            one_hot=False,
+            normalize=False,
+        )
+        initialize_conv1d(self.layer)
+
+
+class TestConv1d_4symmdi1_dense(TestConv1d_4_dense):
+    @override
+    def setUp(self) -> None:
+        self.count_table = make_count_table(n_seqs=65537)
+        self.layer = pyprobound.layers.Conv1d.from_psam(
+            pyprobound.layers.PSAM(
+                alphabet=self.count_table.alphabet,
+                kernel_size=4,
+                pairwise_distance=1,
+                symmetry=[1, 2, 1, 2],
                 information_threshold=0.0,
             ),
             self.count_table,

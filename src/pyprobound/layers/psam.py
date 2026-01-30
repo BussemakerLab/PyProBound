@@ -4,6 +4,7 @@ Members are explicitly re-exported in pyprobound.layers.
 """
 
 import math
+from collections import defaultdict
 from collections.abc import Sequence, Set
 from typing import Any, Literal, TypeVar, cast
 
@@ -265,20 +266,20 @@ class PSAM(LayerSpec):
         return length + self.dilation * (self.kernel_size - 1)
 
     @staticmethod
-    def _get_key(elements: tuple[Tensor, Tensor], index: int) -> str:
+    def _get_key(
+        elements: tuple[Tensor, Tensor], dist: int, index: int
+    ) -> str:
         """Key for a parameter in `betas`.
 
         Args:
-            elements: The two positions on the symmetry vector. For monomer
-                features, both elements should be identical.
+            elements: The two positions on the symmetry vector.
+            dist: The distance between the positions on the symmetry vector.
             index: The index on the parameter vector.
 
         Returns:
             The key for the parameter in the `betas` TParameterDict.
         """
-        iter_elements = (
-            elements[:1] if elements[-1] == elements[0] else elements
-        )
+        iter_elements = elements[:1] if dist == 0 else elements
         return "-".join(
             [
                 str(i)
@@ -315,11 +316,14 @@ class PSAM(LayerSpec):
                 if (pos_alt - pos) != 0:
                     num_index *= in_channels
                 for index in range(num_index):
-                    out.add(
-                        PSAM._get_key(
-                            (torch.tensor(pos), torch.tensor(pos_alt)), index
+                    for dist in range(len(symmetry)):
+                        out.add(
+                            PSAM._get_key(
+                                (torch.tensor(pos), torch.tensor(pos_alt)),
+                                dist,
+                                index,
+                            )
                         )
-                    )
         return out
 
     def _seed(
@@ -374,7 +378,7 @@ class PSAM(LayerSpec):
                         index = self.in_channels - index - 1
                     j = out_channel * self.in_channels + index
                     parameter = self.betas[
-                        self._get_key((position, position), j)
+                        self._get_key((position, position), 0, j)
                     ]
                     val = seeded_fill if index in encoding else unseeded_fill
                     torch.nn.init.constant_(parameter, val)
@@ -522,7 +526,7 @@ class PSAM(LayerSpec):
             for i in range(self.kernel_size - dist):
                 for j in range(math.prod(shape)):
                     key = self._get_key(
-                        (self.symmetry[i], self.symmetry[i + dist]), j
+                        (self.symmetry[i], self.symmetry[i + dist]), dist, j
                     )
                     if key in self.betas:
                         removed_keys.discard(key)
@@ -724,13 +728,13 @@ class PSAM(LayerSpec):
 
             param = torch.stack(
                 [
-                    self.betas[self._get_key(elements, j)]
+                    self.betas[self._get_key(elements, dist, j)]
                     for j in range(math.prod(shape))
                 ]
             ).view(shape)
             if dist > 0 and self.symmetry[i] == self.symmetry[i + dist]:
                 # Autosymmetric pairwise parameter
-                param = param.triu() + param.triu(1).T
+                param = param.triu() + param.triu(1).transpose(-1, -2)
             elements_sort = [i.cpu().abs().item() for i in elements]
             if elements_sort != sorted(elements_sort):
                 param.transpose_(-1, -2)
@@ -755,6 +759,9 @@ class PSAM(LayerSpec):
 
     def fix_gauge(self) -> None:
         """Removes invariances between monomer and pairwise parameters."""
+        # TODO: doesn't work with symmetry string and dinucleotide features
+        # Solution: convert repeated features in a symmetry string
+        #           into new features
         bias_shift = torch.zeros_like(self.bias)
         for dist in range(self.pairwise_distance, -1, -1):
             for i in range(self.kernel_size - dist):
@@ -763,7 +770,7 @@ class PSAM(LayerSpec):
                 # Get pairwise parameters
                 if dist > 0:
                     pairwise_params = [
-                        self.betas[self._get_key((feat1, feat2), j)]
+                        self.betas[self._get_key((feat1, feat2), dist, j)]
                         for j in range(
                             (self.out_channels // self.n_strands)
                             * self.in_channels**2
@@ -781,7 +788,7 @@ class PSAM(LayerSpec):
 
                 # Get monomer parameters
                 monomer1_params = [
-                    self.betas[self._get_key((feat1, feat1), j)]
+                    self.betas[self._get_key((feat1, feat1), 0, j)]
                     for j in range(
                         (self.out_channels // self.n_strands)
                         * self.in_channels
@@ -791,7 +798,7 @@ class PSAM(LayerSpec):
                     cast(list[Tensor], monomer1_params)
                 ).view((self.out_channels // self.n_strands, self.in_channels))
                 monomer2_params = [
-                    self.betas[self._get_key((feat2, feat2), j)]
+                    self.betas[self._get_key((feat2, feat2), 0, j)]
                     for j in range(
                         (self.out_channels // self.n_strands)
                         * self.in_channels
@@ -800,6 +807,12 @@ class PSAM(LayerSpec):
                 monomer2_param = torch.stack(
                     cast(list[Tensor], monomer2_params)
                 ).view((self.out_channels // self.n_strands, self.in_channels))
+                count1 = torch.sum(
+                    torch.abs(feat1) == torch.abs(self.symmetry)
+                )
+                count2 = torch.sum(
+                    torch.abs(feat2) == torch.abs(self.symmetry)
+                )
 
                 # Mean-center pairwise parameters
                 if dist > 0:
@@ -814,7 +827,9 @@ class PSAM(LayerSpec):
                 if dist == 0:
                     shift1 = monomer1_param.mean(-1, keepdim=True)
                     shift2 = monomer2_param.mean(-1, keepdim=True)
-                    bias_shift += shift1 + shift2
+                    bias_shift += shift1 * count1 + (
+                        shift2 * count2 if self.score_reverse else 0
+                    )
                     monomer1_param -= shift1
                     monomer2_param -= shift2
 
