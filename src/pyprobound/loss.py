@@ -17,7 +17,6 @@ from . import __precision__
 from .base import Component, Transform
 from .containers import TModuleList
 from .experiment import Experiment
-from .layers import PSAM
 from .table import Batch, CountBatch, Table
 from .utils import get_split_size
 
@@ -379,7 +378,7 @@ class MultiExperimentLoss(BaseLoss[CountBatch]):
             # Calculate PDF
             log_pdf = torch.tensor(0.0, device=regularization.device)
             for module in self.modules():
-                if isinstance(module, PSAM):
+                if hasattr(module, "get_dirichlet"):
                     log_pdf += module.get_dirichlet()
             regularization -= log_pdf * norm
 

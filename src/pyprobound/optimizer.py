@@ -12,7 +12,7 @@ import tempfile
 import timeit
 import warnings
 from collections.abc import Iterable, MutableMapping, Sequence
-from typing import Any, Generic, TypeVar, cast
+from typing import IO, Any, Generic, TypeAlias, TypeVar, Union, cast
 
 import torch
 from torch import Tensor
@@ -29,6 +29,7 @@ from .utils import clear_cache
 STDOUT = cast(io.TextIOBase, sys.stdout)
 POSINF = torch.tensor(float("inf"))
 T = TypeVar("T", bound=Batch)
+FileLike: TypeAlias = Union[str, os.PathLike[str], IO[bytes]]
 
 
 def _file_not_empty(path: str | os.PathLike[str] | io.TextIOBase) -> bool:
@@ -303,7 +304,7 @@ class Optimizer(Generic[T]):
             ):
                 handle.close()
 
-    def save(self, checkpoint: torch.serialization.FILE_LIKE) -> None:
+    def save(self, checkpoint: FileLike) -> None:
         """Saves the model to a file with "state_dict", "metadata" fields.
 
         Args:
@@ -317,9 +318,7 @@ class Optimizer(Generic[T]):
             ),
         )
 
-    def reload(
-        self, checkpoint: torch.serialization.FILE_LIKE | None = None
-    ) -> dict[str, Any]:
+    def reload(self, checkpoint: FileLike | None = None) -> dict[str, Any]:
         """Loads the model from a checkpoint file.
 
         Args:
@@ -423,9 +422,7 @@ class Optimizer(Generic[T]):
         )
 
     def train_until_convergence(
-        self,
-        checkpoint: torch.serialization.FILE_LIKE | None = None,
-        best_loss: Tensor = POSINF,
+        self, checkpoint: FileLike | None = None, best_loss: Tensor = POSINF
     ) -> Tensor:
         """Repeat optimization steps until the loss stops improving.
 

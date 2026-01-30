@@ -9,9 +9,19 @@ import abc
 import collections
 import functools
 import logging
+import os
 import time
 from collections.abc import Callable, Iterator
-from typing import Any, Literal, NamedTuple, TypeVar, cast
+from typing import (
+    IO,
+    Any,
+    Literal,
+    NamedTuple,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import torch
 from torch import Tensor
@@ -23,6 +33,7 @@ from .utils import clear_cache
 
 logger = logging.getLogger(__name__)
 ComponentT = TypeVar("ComponentT", bound="Component")
+FileLike: TypeAlias = Union[str, os.PathLike[str], IO[bytes]]
 
 
 class Call(NamedTuple):
@@ -196,7 +207,7 @@ class Component(torch.nn.Module, abc.ABC):
 
     def save(
         self,
-        checkpoint: torch.serialization.FILE_LIKE,
+        checkpoint: FileLike,
         flank_lengths: tuple[tuple[int, int], ...] = tuple(),
     ) -> None:
         """Saves the model to a file with "state_dict" and "metadata" fields.
@@ -263,9 +274,7 @@ class Component(torch.nn.Module, abc.ABC):
                 )
             set_attr(self, submod_names, checkpoint_param)
 
-    def reload(
-        self, checkpoint: torch.serialization.FILE_LIKE
-    ) -> dict[str, Any]:
+    def reload(self, checkpoint: FileLike) -> dict[str, Any]:
         """Loads the model from a checkpoint file.
 
         Args:
