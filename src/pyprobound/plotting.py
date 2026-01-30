@@ -43,7 +43,11 @@ AxesArray: TypeAlias = NDArray[Any]
 
 
 def logomaker_plotter(
-    ax: Axes, psam: PSAM, reverse: bool = False, **kwargs: Any
+    ax: Axes,
+    psam: PSAM,
+    reverse: bool = False,
+    mean_center: bool = True,
+    **kwargs: Any,
 ) -> logomaker.Logo:
     """Plots the monomer sequence logo for the given PSAM using Logomaker.
 
@@ -51,6 +55,7 @@ def logomaker_plotter(
         ax: The Axes to draw to.
         psam: A PSAM to plot into a logo.
         reverse: Whether to plot the reverse complement.
+        mean_center: Whether to mean-center the coefficients per position.
     """
     if psam.out_channels // psam.n_strands != 1:
         raise ValueError("Cannot plot logo for multi-channel PSAMs")
@@ -64,7 +69,8 @@ def logomaker_plotter(
         .T.to(device="cpu", dtype=torch.float32)
         .numpy()
     )
-    matrix -= matrix.mean(1, keepdims=True)
+    if mean_center:
+        matrix -= matrix.mean(1, keepdims=True)
     matrix = np.flip(matrix, axis=(0, 1)) if reverse else matrix
     dataframe = pd.DataFrame(
         matrix, columns=psam.alphabet.alphabet, dtype=float
@@ -87,6 +93,7 @@ def logomaker_plotter(
             fade_below=0.5,
             font_name=font_name,
             color_scheme=psam.alphabet.color_scheme,
+            center_values=False,
             **kwargs,
         )
 
@@ -95,7 +102,7 @@ def logomaker_plotter(
     out.style_spines(spines=["left", "bottom"], visible=True)
     ax.set_ylabel(r"$-\Delta \Delta$G/RT", labelpad=-1)
     labels = np.arange(psam.kernel_size)
-    ax.set_xticks(labels, labels)
+    ax.set_xticks(labels, psam.symmetry.numpy())
 
     return out
 
@@ -141,7 +148,7 @@ def pairwise_plotter(
 
     # Draw labels
     positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
-    labels = np.arange(size)
+    labels = psam.symmetry
     ax.set_xticks(positions, labels)
     ax.set_yticks(positions, labels)
 
@@ -167,6 +174,7 @@ def logo(
     width: int = 8,
     reverse: bool = False,
     fix_gauge: bool = True,
+    mean_center: bool = True,
 ) -> None:
     """Plots a sequence recognition logo for the given PSAM.
 
@@ -174,6 +182,7 @@ def logo(
         psam: A PSAM to plot into a logo.
         reverse: Whether to plot the reverse complement.
         fix_gauge: Whether to call fix_gauge() before plotting the logo.
+        mean_center: Whether to mean-center the coefficients per position.
     """
     if psam.out_channels // psam.n_strands != 1:
         raise ValueError("Cannot plot logo for multi-channel PSAMs")
@@ -205,7 +214,9 @@ def logo(
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(width, logo_height))
 
     # Create monomer logo
-    logomaker_plotter(axs[0, 0] if pairwise else ax, psam, reverse)
+    logomaker_plotter(
+        axs[0, 0] if pairwise else ax, psam, reverse, mean_center
+    )
 
     # Create pairwise logo
     if pairwise:
