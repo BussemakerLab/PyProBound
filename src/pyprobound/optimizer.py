@@ -157,14 +157,6 @@ class Optimizer(Generic[T]):
                 device = "mps"
             else:
                 device = "cpu"
-        if device == "cpu":
-            for module in model.modules():
-                if isinstance(module, Conv1d) and module.one_hot:
-                    warnings.warn("one_hot is extremely slow on CPU")
-        if device != "cpu":
-            for module in model.modules():
-                if isinstance(module, Conv1d) and not module.one_hot:
-                    warnings.warn("dense is extremely slow on GPU")
 
         # Store class attributes
         self.device = torch.device(device)

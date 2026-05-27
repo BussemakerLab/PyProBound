@@ -102,7 +102,7 @@ def logomaker_plotter(
     out.style_spines(spines=["left", "bottom"], visible=True)
     ax.set_ylabel(r"$-\Delta \Delta$G/RT", labelpad=-1)
     labels = np.arange(psam.kernel_size)
-    ax.set_xticks(labels, psam.symmetry.numpy())
+    ax.set_xticks(labels, psam.symmetry.cpu().numpy())
 
     return out
 
@@ -148,7 +148,7 @@ def pairwise_plotter(
 
     # Draw labels
     positions = in_channels * np.arange(size) + (in_channels / 2) - 0.5
-    labels = psam.symmetry
+    labels = psam.symmetry.cpu().numpy()
     ax.set_xticks(positions, labels)
     ax.set_yticks(positions, labels)
 
