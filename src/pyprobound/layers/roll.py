@@ -184,7 +184,8 @@ class Roll(Layer):
 
             # Implement vectorized shift with gather
             indexing = (
-                torch.arange(seqs.shape[-1]).unsqueeze(0) - roll.unsqueeze(1)
+                torch.arange(seqs.shape[-1], device=seqs.device).unsqueeze(0)
+                - roll.unsqueeze(1)
             ) % seqs.shape[-1]
             if seqs.ndim == 3:
                 indexing = indexing.unsqueeze(1).expand(-1, seqs.shape[-2], -1)

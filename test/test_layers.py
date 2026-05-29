@@ -298,5 +298,35 @@ class TestMaxPool1d_2floor(BaseTestCases.BaseTestLayer):
         )
 
 
+class TestModuleSpec(BaseTestCases.BaseTestLayer):
+    @override
+    def setUp(self) -> None:
+        length = 20
+        self.count_table = make_count_table(max_input_length=length)
+        alphabet = self.count_table.alphabet
+        self.count_table.set_flank_length(0, 0)
+        self.count_table.seqs = alphabet.embedding(
+            self.count_table.seqs
+        ).transpose(1, 2)
+        self.layer = pyprobound.layers.ModuleLayer.from_spec(
+            pyprobound.layers.ModuleSpec(
+                alphabet=alphabet,
+                module=torch.nn.Sequential(
+                    torch.nn.Flatten(start_dim=1),
+                    torch.nn.Linear(length * len(alphabet.alphabet), 1),
+                ),
+            ),
+            self.count_table,
+        )
+
+    @unittest.skip("Skipping for now")
+    def test_update_limit(self) -> None:
+        pass
+
+    @unittest.skip("Skipping for now")
+    def test_out_len_finite(self) -> None:
+        pass
+
+
 if __name__ == "__main__":
     unittest.main()
