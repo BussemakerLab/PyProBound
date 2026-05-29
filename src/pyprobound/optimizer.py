@@ -58,6 +58,8 @@ class Optimizer(Generic[T]):
         optimizer: type[torch.optim.Optimizer] = torch.optim.LBFGS,
         optim_args: MutableMapping[str, Any] | None = None,
         sampler_args: MutableMapping[str, Any] | None = None,
+        use_amp: bool = False,
+        dtype: torch.dtype | None = None,
     ) -> None:
         r"""Initializes the optimizer.
 
@@ -80,6 +82,8 @@ class Optimizer(Generic[T]):
             optim_args: Parameters passed to the optimizer.
                 (Defaults to `{"line_search_fn":"strong_wolfe"}` if available).
             sampler_args: Parameters passed to the sampler.
+            use_amp: Whether to use automatic mixed precision.
+            dtype: The dtype to use for automatic mixed precision.
         """
 
         if len(list(model.components())) != len(train_tables):
@@ -169,6 +173,8 @@ class Optimizer(Generic[T]):
         self.optim_args = optim_args
         self.optimizer: torch.optim.Optimizer | None = None
         self.greedy_threshold = greedy_threshold
+        self.use_amp = use_amp
+        self.dtype = dtype
         if (
             "line_search_fn"
             in inspect.signature(self.optimizer_type).parameters
@@ -385,9 +391,14 @@ class Optimizer(Generic[T]):
                 def closure() -> float:
                     """Used to recompute loss."""
                     cast(torch.optim.Optimizer, self.optimizer).zero_grad()
-                    # pylint: disable-next=cell-var-from-loop
-                    loss = self.model(batch)
-                    negloglik = loss.negloglik + loss.regularization
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.dtype,
+                        enabled=self.use_amp,
+                    ):
+                        # pylint: disable-next=cell-var-from-loop
+                        loss = self.model(batch)
+                        negloglik = loss.negloglik + loss.regularization
                     negloglik.backward()  # type: ignore[no-untyped-call]
                     return cast(float, negloglik)
 
@@ -403,7 +414,12 @@ class Optimizer(Generic[T]):
             # Calculate loss
             with torch.inference_mode():
                 self.model.eval()
-                nll, reg = self.model(batch)
+                with torch.autocast(
+                    device_type=self.device.type,
+                    dtype=self.dtype,
+                    enabled=self.use_amp,
+                ):
+                    nll, reg = self.model(batch)
                 neglogliks.append(nll.detach().cpu())
                 regularizations.append(reg.detach().cpu())
 

@@ -13,7 +13,6 @@ import torch
 from torch import Tensor
 from typing_extensions import Self, override
 
-from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Transform
 from .containers import TModuleList
 
@@ -57,7 +56,7 @@ class Contribution(Transform):
         self.binding = binding
         self.train_activity = train_activity
         self.log_activity = torch.nn.Parameter(
-            torch.tensor(log_activity, dtype=__precision__),
+            torch.tensor(log_activity),
             requires_grad=self.train_activity,
         )
         self.activity_heuristic = activity_heuristic
@@ -165,7 +164,7 @@ class Aggregate(Transform):
         super().__init__()
         self.train_concentration = train_concentration
         self.log_target_concentration: Tensor = torch.nn.Parameter(
-            torch.tensor(math.log(target_concentration), dtype=__precision__),
+            torch.tensor(math.log(target_concentration)),
             requires_grad=train_concentration,
         )
 
@@ -278,7 +277,7 @@ class Aggregate(Transform):
         out = torch.full(
             (len(seqs),),
             float("-inf"),
-            dtype=__precision__,
+            
             device=self.contributions[0].log_activity.device,
         )
         for ctrb in self._contributing():

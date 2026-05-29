@@ -10,7 +10,6 @@ import torch
 from torch import Tensor
 from typing_extensions import Self, override
 
-from .. import __precision__
 from ..alphabets import Alphabet
 from ..table import Table
 from .layer import Layer, LayerSpec

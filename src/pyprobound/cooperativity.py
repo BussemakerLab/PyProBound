@@ -15,7 +15,6 @@ from torch import Tensor
 from torch.nn.modules.module import _addindent
 from typing_extensions import override
 
-from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
 from .containers import TParameterList
 from .layers import LayerSpec, ModeKey, PadSpec
@@ -79,7 +78,7 @@ class Spacing(Spec):
         self.mode_key_a = ModeKey(mode_key_a)
         self.mode_key_b = ModeKey(mode_key_b)
         self.log_spacing = torch.nn.Parameter(
-            torch.zeros(size=(self.n_strands, 1), dtype=__precision__)
+            torch.zeros(size=(self.n_strands, 1))
         )
         self.max_overlap = max_overlap
         self.max_spacing = max_spacing
@@ -498,7 +497,7 @@ class Cooperativity(Binding):
         self._length_specific_bias = length_specific_bias
         self.train_hill = train_hill
         self.log_hill = torch.nn.Parameter(
-            torch.tensor(0, dtype=__precision__), requires_grad=train_hill
+            torch.tensor(0.0), requires_grad=train_hill
         )
         self.spacing._update_propagation()
 
@@ -775,7 +774,7 @@ class Cooperativity(Binding):
                         torch.nn.Parameter(
                             torch.zeros(
                                 self.log_posbias[0].shape[:-1] + (0,),
-                                dtype=__precision__,
+                                
                             ),
                             requires_grad=self.train_posbias,
                         )
@@ -791,7 +790,7 @@ class Cooperativity(Binding):
                         torch.nn.Parameter(
                             torch.zeros(
                                 self.log_posbias[0].shape[:-1] + (0,),
-                                dtype=__precision__,
+                                
                             ),
                             requires_grad=self.train_posbias,
                         ),
@@ -1083,7 +1082,7 @@ class Cooperativity(Binding):
         out = torch.full(
             (len(seqs),),
             float("-inf"),
-            dtype=__precision__,
+            
             device=self.log_hill.device,
         )
 

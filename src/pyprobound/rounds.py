@@ -12,7 +12,6 @@ from torch import Tensor
 from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
-from . import __precision__
 from .aggregate import Aggregate
 from .base import Binding, BindingOptim, Call, Component, Spec, Transform
 from .utils import log1mexp
@@ -59,7 +58,7 @@ class BaseRound(Transform, abc.ABC):
         self,
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         library_concentration: float = -1,
         name: str = "",
     ) -> None:
@@ -77,8 +76,7 @@ class BaseRound(Transform, abc.ABC):
         self.reference_round = reference_round
         self.train_depth = train_depth
         self.log_depth = torch.nn.Parameter(
-            torch.tensor(log_depth, dtype=__precision__),
-            requires_grad=train_depth,
+            torch.tensor(log_depth), requires_grad=train_depth
         )
         self._library_concentration = library_concentration
 
@@ -259,9 +257,7 @@ class InitialRound(BaseRound):
 
     @override
     def log_enrichment(self, seqs: Tensor) -> Tensor:
-        return torch.zeros(
-            len(seqs), dtype=__precision__, device=self.log_depth.device
-        )
+        return torch.zeros(len(seqs), device=self.log_depth.device)
 
 
 class Round(BaseRound):
@@ -279,7 +275,7 @@ class Round(BaseRound):
         aggregate: Aggregate,
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         library_concentration: float = -1,
         name: str = "",
     ) -> None:
@@ -310,7 +306,7 @@ class Round(BaseRound):
         binding: Iterable[Binding],
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
@@ -455,10 +451,10 @@ class RhoGammaRound(Round):
         aggregate: Aggregate,
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         library_concentration: float = -1,
-        rho: float = 0,
-        gamma: float = -1,
+        rho: float = 0.0,
+        gamma: float = -1.0,
         name: str = "",
     ) -> None:
         r"""Initializes the round.
@@ -482,10 +478,8 @@ class RhoGammaRound(Round):
             library_concentration=library_concentration,
             name=name,
         )
-        self.rho = torch.nn.Parameter(torch.tensor(rho, dtype=__precision__))
-        self.gamma = torch.nn.Parameter(
-            torch.tensor(gamma, dtype=__precision__)
-        )
+        self.rho = torch.nn.Parameter(torch.tensor(rho))
+        self.gamma = torch.nn.Parameter(torch.tensor(gamma))
 
     @override
     @classmethod
@@ -494,7 +488,7 @@ class RhoGammaRound(Round):
         binding: Iterable[Binding],
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
@@ -573,9 +567,9 @@ class ExponentialRound(Round):
         aggregate: Aggregate,
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         library_concentration: float = -1,
-        delta: float = -15,
+        delta: float = -15.0,
         train_delta: bool = True,
         name: str = "",
     ) -> None:
@@ -600,9 +594,7 @@ class ExponentialRound(Round):
             library_concentration=library_concentration,
             name=name,
         )
-        self.delta = torch.nn.Parameter(
-            torch.tensor(delta, dtype=__precision__)
-        )
+        self.delta = torch.nn.Parameter(torch.tensor(delta))
         self.train_delta = train_delta
 
     @classmethod
@@ -647,13 +639,13 @@ class ExponentialRound(Round):
         binding: Iterable[Binding],
         reference_round: BaseRound | None,
         train_depth: bool = True,
-        log_depth: float = 0,
+        log_depth: float = 0.0,
         train_concentration: bool = False,
         target_concentration: float = 1,
         library_concentration: float = -1,
         activity_heuristic: float = 0.05,
         name: str = "",
-        delta: float = -15,
+        delta: float = -15.0,
         train_delta: bool = True,
     ) -> Self:
         r"""Creates a new instance from binding components and reference round.

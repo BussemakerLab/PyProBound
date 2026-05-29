@@ -10,7 +10,6 @@ import torch
 from torch import Tensor
 from typing_extensions import override
 
-from . import __precision__
 from .base import Transform
 from .containers import TModuleList
 from .rounds import BaseRound, BoundRound, UnboundRound

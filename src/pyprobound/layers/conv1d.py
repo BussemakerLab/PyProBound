@@ -12,7 +12,6 @@ from torch import Tensor
 from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
-from .. import __precision__
 from ..base import BindingOptim, Call, Step
 from ..table import Table
 from ..utils import ceil_div
@@ -133,7 +132,7 @@ class Conv1d(Layer):
                     bias_channels,  # pylint: disable=possibly-used-before-assignment
                     n_windows,
                 ),
-                dtype=__precision__,
+                
             ),
             requires_grad=train_posbias,
         )
@@ -342,7 +341,7 @@ class Conv1d(Layer):
     def max_embedding_size(self) -> int:
         if self.one_hot:
             element_size = torch.tensor(
-                data=[], dtype=__precision__
+                data=[]
             ).element_size()
             total_in_channels = self.in_channels
         else:

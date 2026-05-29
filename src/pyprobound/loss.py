@@ -13,7 +13,6 @@ import torch
 from torch import Tensor
 from typing_extensions import override
 
-from . import __precision__
 from .base import Component, Transform
 from .containers import TModuleList
 from .experiment import Experiment

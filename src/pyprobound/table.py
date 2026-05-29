@@ -35,7 +35,6 @@ from torch.utils.data import DataLoader, Dataset, Sampler, SubsetRandomSampler
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
 from typing_extensions import override
 
-from . import __precision__
 from .alphabets import Alphabet
 from .base import Transform
 from .utils import get_split_size
@@ -418,7 +417,7 @@ class CountTable(Table[CountBatch], CountBatch):
         self._padding_value = alphabet.neginf_pad
         if wildcard_pad:
             self._padding_value = alphabet.wildcard_pad
-        self.target = torch.tensor(dataframe.values, dtype=__precision__)
+        self.target = (torch.tensor(dataframe.values) * 1.0)
         self.seqs = torch.nn.utils.rnn.pad_sequence(
             [alphabet.translate(seq) for seq in dataframe.index],
             batch_first=True,

@@ -14,7 +14,6 @@ from torch import Tensor
 from torch.nn.modules.module import _addindent
 from typing_extensions import Self, override
 
-from . import __precision__
 from .base import Binding, BindingOptim, Call, Component, Spec, Step, Transform
 from .containers import TModuleList
 from .layers import (
@@ -74,7 +73,7 @@ class Mode(Binding, LengthManager):
         # Store model attributes
         self.train_hill = train_hill
         self.log_hill = torch.nn.Parameter(
-            torch.tensor(0, dtype=__precision__), requires_grad=train_hill
+            torch.tensor(0.0), requires_grad=train_hill
         )
 
         # Verify scoring model
@@ -485,7 +484,7 @@ class Mode(Binding, LengthManager):
         return torch.full(
             size=(1, self.in_channels, self.input_shape),
             fill_value=1 / self.in_channels,
-            dtype=__precision__,
+            
             device=self.log_hill.device,
         )
 

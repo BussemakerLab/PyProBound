@@ -9,8 +9,6 @@ import torch.nn.functional as F
 from torch import Tensor
 from typing_extensions import override
 
-from . import __precision__
-
 _iupac = {
     "M": ["A", "C"],
     "R": ["A", "G"],
@@ -112,28 +110,21 @@ class Alphabet:
         for code in self.encoding:
             if code == self.encoding[self.neginf_pad]:
                 embedding_list.append(
-                    torch.full(
-                        (len(self.alphabet),),
-                        float("-inf"),
-                        dtype=__precision__,
-                    )
+                    torch.full((len(self.alphabet),), float("-inf"))
                 )
             else:
                 if len(self.get_encoding[code]) > 0:
                     encoded = self.get_encoding[code]
                     embedding_list.append(
-                        (
-                            F.one_hot(
-                                torch.tensor(encoded),
-                                num_classes=len(self.alphabet),
-                            ).sum(0)
-                            / len(encoded)
-                        ).to(dtype=__precision__)
+                        1.0
+                        * F.one_hot(
+                            torch.tensor(encoded),
+                            num_classes=len(self.alphabet),
+                        ).sum(0)
+                        / len(encoded)
                     )
                 else:
-                    embedding_list.append(
-                        torch.zeros(len(self.alphabet), dtype=__precision__)
-                    )
+                    embedding_list.append(torch.zeros(len(self.alphabet)))
         embedding_weight = torch.stack(embedding_list)
         self.embedding: torch.nn.Embedding
         self.embedding = torch.nn.Embedding.from_pretrained(embedding_weight)  # type: ignore[no-untyped-call]

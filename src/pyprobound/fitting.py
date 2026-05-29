@@ -16,7 +16,6 @@ from torch import Tensor
 from torch.utils.data import Sampler
 from typing_extensions import override
 
-from . import __precision__
 from .aggregate import Aggregate, Contribution
 from .base import Spec, Transform
 from .cooperativity import Cooperativity
@@ -538,11 +537,11 @@ class Fit(BaseFit):
             scale = (self.table.target.max() - self.table.target.min()).item()
             intercept = self.table.target.min().item()
         self.scale = torch.nn.Parameter(
-            torch.tensor(scale, dtype=__precision__),
+            torch.tensor(scale),
             requires_grad=train_offset,
         )
         self.intercept = torch.nn.Parameter(
-            torch.tensor(intercept, dtype=__precision__),
+            torch.tensor(intercept),
             requires_grad=train_offset,
         )
 
@@ -717,11 +716,11 @@ class LogFit(BaseFit):
             )
             intercept = self.table.target.min().log().item()
         self.scale = torch.nn.Parameter(
-            torch.tensor(scale, dtype=__precision__),
+            torch.tensor(scale),
             requires_grad=train_offset,
         )
         self.intercept = torch.nn.Parameter(
-            torch.tensor(intercept, dtype=__precision__),
+            torch.tensor(intercept),
             requires_grad=train_offset,
         )
 

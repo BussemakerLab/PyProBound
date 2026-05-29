@@ -3,17 +3,17 @@
 Members are explicitly re-exported in pyprobound.layers.
 """
 
+from __future__ import annotations
+
 import math
-from collections import defaultdict
 from collections.abc import Sequence, Set
 from typing import Any, Literal, TypeVar, cast
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing_extensions import override
+from typing_extensions import Self, override
 
-from .. import __precision__
 from ..alphabets import Alphabet
 from ..base import BindingOptim, Call, Step
 from ..containers import TParameterDict
@@ -182,7 +182,7 @@ class PSAM(LayerSpec):
         # Create and initialize matrix parameters
         self.bias = torch.nn.Parameter(
             torch.zeros(
-                (self.out_channels // self.n_strands, 1), dtype=__precision__
+                (self.out_channels // self.n_strands, 1)
             ),
             requires_grad=train_bias,
         )
@@ -190,6 +190,48 @@ class PSAM(LayerSpec):
         self.update_params(pairwise_grad=True)
         if seed is not None:
             self._seed(seed, seed_scale=seed_scale)
+
+    def make_indel_psam(
+        self, symmetry: Sequence[int] | None = None, name: str | None = None
+    ) -> Self:
+        """Creates a new PSAM instance with the same parameters.
+
+        Args:
+            symmetry: The symmetry vector for the new PSAM.
+
+        Returns:
+            A new PSAM instance of the same type.
+        """
+        if symmetry is None:
+            symmetry = self.symmetry.tolist()
+
+        psam = type(self)(
+            kernel_size=len(symmetry),
+            alphabet=self.alphabet,
+            out_channels=self.out_channels,
+            in_channels=self.in_channels,
+            pairwise_distance=self.pairwise_distance,
+            dilation=self.dilation,
+            symmetry=symmetry,
+            score_reverse=self.score_reverse,
+            shift_footprint=self.shift_footprint,
+            shift_footprint_heuristic=self.shift_footprint_heuristic,
+            increment_footprint=self.increment_footprint,
+            increment_flank=self.increment_flank,
+            increment_flank_with_footprint=self.increment_flank_with_footprint,
+            information_threshold=self.information_threshold,
+            max_kernel_size=self.max_kernel_size,
+            frozen_parameters=self.frozen_parameters,
+            normalize=self.normalize,
+            train_bias=self.train_bias,
+            train_betas=self.train_betas,
+            name=name if name is not None else self.name,
+        )
+        for k in psam.betas:
+            if k in self.betas:
+                psam.betas[k] = self.betas[k]
+
+        return psam
 
     @override
     def __repr__(self) -> str:
@@ -535,7 +577,7 @@ class PSAM(LayerSpec):
                             torch.tensor(
                                 0.0,
                                 device=self.symmetry.device,
-                                dtype=__precision__,
+                                
                             ),
                             requires_grad=(
                                 (pairwise_grad or dist == 0)
