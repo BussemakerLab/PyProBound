@@ -265,16 +265,16 @@ class RNA(Alphabet):
 class Codon(Alphabet):
     r"""Stores the codon encoding of sequences into tensors.
 
-    Three sequence characters are reserved: '   ' is -infinity (not scored),
-    '***' is the IUPAC wildcard character NNN, and '---' is zero.
+    Three sequence tokens are reserved: ``"   "`` is -infinity (not scored),
+    ``***`` is the IUPAC wildcard character NNN, and ``---`` is zero.
 
     Attributes:
-        alphabet (tuple[str]): All :math:`_{4}P_{3}` permutations of the DNA
-            alphabet.
+        alphabet (tuple[str]): All :math:`4^3 = 64` length-three sequences from
+            the DNA alphabet.
         get_index (dict[str, int]): A mapping of monomers in the alphabet to
             indices in the embedding matrix.
         get_encoding (dict[str, tuple[int,...]]): IUPAC encoding of monomers to
-            tuples of indices in the embedding matrix; for example, '***' maps
+            tuples of indices in the embedding matrix; for example, ``***`` maps
             to (0, 1, ..., 63).
     """
 
