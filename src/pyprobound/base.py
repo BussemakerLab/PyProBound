@@ -310,7 +310,7 @@ class Component(torch.nn.Module, abc.ABC):
         for p in self.parameters():
             p.requires_grad_(False)
 
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Component.unfreezable" = "all") -> None:
         """Turns on gradient calculation for the specified parameter.
 
         Args:

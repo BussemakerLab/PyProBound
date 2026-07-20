@@ -39,6 +39,7 @@ autosummary_generate = True
 add_module_names = False
 autodoc_member_order = "bysource"
 napoleon_google_docstring = True
+napoleon_use_ivar = True
 autodoc_default_options = {"member-order": "bysource", "undoc-members": True}
 nb_execution_mode = "off"
 

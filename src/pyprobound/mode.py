@@ -301,7 +301,7 @@ class Mode(Binding, LengthManager):
                 )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Mode.unfreezable" = "all") -> None:
         if parameter in ("hill", "all") and self.train_hill:
             self.log_hill.requires_grad_()
         if parameter != "hill":

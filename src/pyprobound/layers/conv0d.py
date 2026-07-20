@@ -175,7 +175,7 @@ class Conv0d(Layer):
             )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Conv0d.unfreezable" = "all") -> None:
         if parameter in ("posbias", "all") and self.train_posbias:
             self.log_posbias.requires_grad_()
         if parameter != "posbias":

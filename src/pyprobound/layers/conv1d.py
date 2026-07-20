@@ -29,8 +29,10 @@ class Conv1d(Layer):
     :math:`-\log K^{rel}_{\text{D}}` of each sliding window.
 
     .. math::
+
             \log \frac{1}{K^{rel}_{\text{D}, a} (S_{i, x})}
             = \omega(x) + \sum_{\phi} \beta_\phi \mathbb{1}_\phi(S_{i, x})
+
     where :math:`\mathbb{1}_\phi(S_{i, x})` is the indicator function of when
     window :math:`x` of sequence :math:`i` contains feature :math:`\phi`.
 
@@ -298,7 +300,7 @@ class Conv1d(Layer):
             )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Conv1d.unfreezable" = "all") -> None:
         if parameter in ("posbias", "all") and self.train_posbias:
             self.log_posbias.requires_grad_()
         if parameter != "posbias":

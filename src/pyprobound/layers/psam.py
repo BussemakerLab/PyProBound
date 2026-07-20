@@ -426,7 +426,7 @@ class PSAM(LayerSpec):
                     torch.nn.init.constant_(parameter, val)
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "PSAM.unfreezable" = "all") -> None:
         if self.train_betas:
             if parameter in ("monomer", "pairwise", "all"):
                 if self.train_bias:
