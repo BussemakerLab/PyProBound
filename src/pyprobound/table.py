@@ -73,6 +73,36 @@ class CountBatch(Batch):
         return len(self.seqs)
 
 
+@dataclasses.dataclass
+class PairedCountBatch(Batch):
+    r"""A protocol for a set of rows from a paired-end count table.
+
+    Each row links two sequences (e.g. the left and right Tn5 cut windows of
+    an ATAC-seq fragment) that share the same round counts.
+
+    Attributes:
+        seqs_left: Left-end sequence tensor of shape
+            :math:`(\text{minibatch},\text{length})`.
+        seqs_right: Right-end sequence tensor of shape
+            :math:`(\text{minibatch},\text{length})`.
+        target: A count tensor of shape
+            :math:`(\text{minibatch},\text{rounds})`.
+    """
+
+    seqs_left: Tensor
+    seqs_right: Tensor
+    target: Tensor
+
+    @override
+    def batchlen(self) -> int:
+        return len(self.seqs_left)
+
+    @property
+    def seqs(self) -> tuple[Tensor, Tensor]:
+        """Paired sequences as ``(seqs_left, seqs_right)`` for Round/Experiment."""
+        return (self.seqs_left, self.seqs_right)
+
+
 def collate_batch_fn(
     batch: Sequence[Batch], *, collate_fn_map: Any = None
 ) -> Batch:
@@ -94,7 +124,7 @@ default_collate_fn_map[Batch] = collate_batch_fn
 
 def score(
     module: Transform,
-    batch: CountBatch,
+    batch: CountBatch | PairedCountBatch,
     fun: str = "forward",
     max_split: int | None = None,
     **kwargs: Any,
@@ -103,7 +133,8 @@ def score(
 
     Args:
         module: The Transform used for scoring.
-        batch: The CountBatch containing the sequences and counts to be scored.
+        batch: The CountBatch or PairedCountBatch containing the sequences and
+            counts to be scored.
         fun: The name of the function taken from the module for scoring.
         max_split: Maximum number of sequences scored at a time.
         kwargs: Any keyword arguments passed to the function.
@@ -111,16 +142,16 @@ def score(
     Returns:
         A tuple of the observed counts and predicted scores, both on CPU.
     """
-    method: Callable[[Tensor], Tensor] = getattr(module, fun)
+    method: Callable[..., Tensor] = getattr(module, fun)
     for p in module.parameters():
         device = p.device
         break
     split_size = get_split_size(
         module.max_embedding_size(),
         (
-            len(batch.seqs)
+            batch.batchlen()
             if max_split is None
-            else min(max_split, len(batch.seqs))
+            else min(max_split, batch.batchlen())
         ),
         device,
     )
@@ -129,12 +160,25 @@ def score(
     observations: list[Tensor] = []
     with torch.inference_mode():
         module.eval()
-        for seqs, target in zip(
-            torch.split(batch.seqs, split_size),
-            torch.split(batch.target, split_size),
-        ):
-            predictions.append(method(seqs.to(device), **kwargs).cpu())
-            observations.append(target.cpu())
+        if isinstance(batch, PairedCountBatch):
+            for seqs_left, seqs_right, target in zip(
+                torch.split(batch.seqs_left, split_size),
+                torch.split(batch.seqs_right, split_size),
+                torch.split(batch.target, split_size),
+            ):
+                predictions.append(
+                    method(
+                        (seqs_left.to(device), seqs_right.to(device)), **kwargs
+                    ).cpu()
+                )
+                observations.append(target.cpu())
+        else:
+            for seqs, target in zip(
+                torch.split(batch.seqs, split_size),
+                torch.split(batch.target, split_size),
+            ):
+                predictions.append(method(seqs.to(device), **kwargs).cpu())
+                observations.append(target.cpu())
 
     return torch.cat(observations), torch.cat(predictions)
 
@@ -628,6 +672,233 @@ class CountTable(Table[CountBatch], CountBatch):
     @override
     def __len__(self) -> int:
         return len(self.seqs)
+
+
+def get_paired_dataframe(
+    paths: str | list[str],
+    total_count: int | None = None,
+    random_state: int | None = None,
+) -> DataFrame:
+    """Loads tab-delimited paired-end count tables into a MultiIndex dataframe.
+
+    Each file is assumed to have columns ``sequence_left``, ``sequence_right``,
+    then one or more count columns, separated by tabs, optionally with a header
+    whose first two fields are those sequence column names.
+
+    Args:
+        paths: Filepath(s) to be read.
+        total_count: Optional count thinning passed to :func:`sample_counts`.
+        random_state: Seed for thinning.
+
+    Returns:
+        A dataframe indexed by ``(sequence_left, sequence_right)``.
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+    dataframe: DataFrame | None = None
+    for path in paths:
+        curr = pd.read_csv(path, sep="\t")
+        if "sequence_left" not in curr.columns or "sequence_right" not in curr.columns:
+            raise ValueError(
+                f"{path} must contain 'sequence_left' and 'sequence_right' columns"
+            )
+        curr = curr.set_index(["sequence_left", "sequence_right"])
+        if dataframe is None:
+            dataframe = curr
+        else:
+            dataframe = dataframe.join(curr, how="outer")
+    assert dataframe is not None
+    dataframe = dataframe.fillna(0)
+    if total_count is not None:
+        dataframe = sample_counts(dataframe, total_count, random_state)
+    return dataframe
+
+
+class PairedCountTable(Table[PairedCountBatch], PairedCountBatch):
+    r"""A count table whose rows pair two sequences with shared round counts.
+
+    Intended for assays such as ATAC-seq where each observation is a fragment
+    defined by two Tn5 insertion ends. The dataframe index must be a
+    two-level MultiIndex ``(sequence_left, sequence_right)``.
+
+    Flank management is not supported (flank lengths must remain 0); ATAC
+    windows are typically fixed-length genomic extracts that do not use SELEX
+    adapter flanks.
+
+    Attributes:
+        seqs_left: Left-end sequence tensor.
+        seqs_right: Right-end sequence tensor.
+        target: Count tensor of shape :math:`(\text{rows},\text{rounds})`.
+        counts_per_round: Total counts per round.
+    """
+
+    def __init__(
+        self,
+        dataframe: DataFrame,
+        alphabet: Alphabet,
+        transliterate: dict[str, str] | None = None,
+        wildcard_pad: bool = False,
+        min_variable_length: int | None = None,
+        max_variable_length: int | None = None,
+    ) -> None:
+        r"""Initializes the paired count table.
+
+        Args:
+            dataframe: Dataframe with a 2-level MultiIndex of sequences and
+                round-count columns.
+            alphabet: Alphabet used to encode sequences into tensors.
+            transliterate: Optional string replacements applied to both ends
+                before encoding.
+            wildcard_pad: Whether to pad with the alphabet wildcard instead of
+                ``neginf_pad``.
+            min_variable_length: Minimum allowed variable length (both ends).
+            max_variable_length: Maximum allowed variable length (both ends).
+        """
+        if not isinstance(dataframe.index, pd.MultiIndex):
+            raise ValueError(
+                "PairedCountTable requires a 2-level MultiIndex "
+                "(sequence_left, sequence_right); got "
+                f"{type(dataframe.index).__name__}"
+            )
+        if dataframe.index.nlevels != 2:
+            raise ValueError(
+                "PairedCountTable requires a 2-level MultiIndex; got "
+                f"{dataframe.index.nlevels} levels"
+            )
+        if any((dataframe <= 0).all(axis=1)):
+            warnings.warn(
+                "Some sequence pairs do not have a positive count in any round"
+            )
+
+        left_seqs = dataframe.index.get_level_values(0).astype(str)
+        right_seqs = dataframe.index.get_level_values(1).astype(str)
+        if transliterate is not None:
+            for pattern, replace in transliterate.items():
+                left_seqs = left_seqs.str.replace(pattern, replace)
+                right_seqs = right_seqs.str.replace(pattern, replace)
+
+        self._padding_value = alphabet.neginf_pad
+        if wildcard_pad:
+            self._padding_value = alphabet.wildcard_pad
+        self.wildcard_padded = wildcard_pad
+        self.max_left_flank_length = 0
+        self.max_right_flank_length = 0
+
+        self.target = torch.tensor(dataframe.values) * 1.0
+        self.seqs_left = torch.nn.utils.rnn.pad_sequence(
+            [alphabet.translate(seq) for seq in left_seqs],
+            batch_first=True,
+            padding_value=self._padding_value,
+        )
+        self.seqs_right = torch.nn.utils.rnn.pad_sequence(
+            [alphabet.translate(seq) for seq in right_seqs],
+            batch_first=True,
+            padding_value=self._padding_value,
+        )
+
+        left_lengths = torch.sum(
+            self.seqs_left != alphabet.neginf_pad, dim=1
+        ).unsqueeze(-1)
+        right_lengths = torch.sum(
+            self.seqs_right != alphabet.neginf_pad, dim=1
+        ).unsqueeze(-1)
+        self.variable_lengths = torch.maximum(left_lengths, right_lengths)
+        curr_min_variable_length = int(
+            min(left_lengths.min().item(), right_lengths.min().item())
+        )
+        curr_max_variable_length = int(
+            max(left_lengths.max().item(), right_lengths.max().item())
+        )
+        if min_variable_length is None:
+            min_variable_length = curr_min_variable_length
+        if max_variable_length is None:
+            max_variable_length = curr_max_variable_length
+        if curr_min_variable_length < min_variable_length:
+            raise ValueError(
+                "min_variable_length is smaller than"
+                " the shortest sequence in dataframe"
+            )
+        if curr_max_variable_length > max_variable_length:
+            raise ValueError(
+                "max_variable_length is smaller than"
+                " the longest sequence in dataframe"
+            )
+        self._min_variable_length = min_variable_length
+        self._max_variable_length = max_variable_length
+
+        pad_left = self._max_variable_length - self.seqs_left.shape[-1]
+        pad_right = self._max_variable_length - self.seqs_right.shape[-1]
+        if pad_left > 0:
+            self.seqs_left = F.pad(
+                self.seqs_left, (0, pad_left), value=self._padding_value
+            ).contiguous()
+        else:
+            self.seqs_left = self.seqs_left.contiguous()
+        if pad_right > 0:
+            self.seqs_right = F.pad(
+                self.seqs_right, (0, pad_right), value=self._padding_value
+            ).contiguous()
+        else:
+            self.seqs_right = self.seqs_right.contiguous()
+
+        self.counts_per_round = torch.sum(self.target, dim=0)
+
+        # Skip Table.__init__ flank setup (flanks unsupported); set attrs directly.
+        self.alphabet = alphabet
+        self._left_flank = ""
+        self._right_flank = ""
+        self._left_flank_length = 0
+        self._right_flank_length = 0
+
+    @property
+    def seqs(self) -> tuple[Tensor, Tensor]:
+        """Paired sequences as ``(seqs_left, seqs_right)``."""
+        return (self.seqs_left, self.seqs_right)
+
+    @override
+    @property
+    def input_shape(self) -> int:
+        return self.seqs_left.shape[-1]
+
+    @override
+    @property
+    def min_read_length(self) -> int:
+        if self.wildcard_padded:
+            return self.max_read_length
+        return self._min_variable_length
+
+    @override
+    @property
+    def max_read_length(self) -> int:
+        return self._max_variable_length
+
+    @override
+    def get_setup_string(self) -> str:
+        return "\n".join(
+            [
+                f"\t\tMaximum Variable Length: {self._max_variable_length}",
+                "\t\tPaired ends: sequence_left, sequence_right",
+                f"\t\tLeft Flank Length: {self._left_flank_length}",
+                f"\t\tRight Flank Length: {self._right_flank_length}",
+            ]
+        )
+
+    @override
+    def set_flank_length(self, left: int = 0, right: int = 0) -> None:
+        if left != 0 or right != 0:
+            raise ValueError(
+                "PairedCountTable does not support nonzero flank lengths"
+            )
+
+    @override
+    def __getitem__(self, idx: int) -> PairedCountBatch:
+        return PairedCountBatch(
+            self.seqs_left[idx], self.seqs_right[idx], self.target[idx]
+        )
+
+    @override
+    def __len__(self) -> int:
+        return len(self.seqs_left)
 
 
 class EvenSampler(Sampler[int]):

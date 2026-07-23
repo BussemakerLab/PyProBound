@@ -16,7 +16,7 @@ from typing_extensions import override
 from .base import Component, Transform
 from .containers import TModuleList
 from .experiment import Experiment
-from .table import Batch, CountBatch, Table
+from .table import Batch, CountBatch, PairedCountBatch, Table
 from .utils import get_split_size
 
 T = TypeVar("T", bound=Batch)
@@ -291,7 +291,7 @@ class BaseLoss(Component, Generic[T]):
         return cast(Loss, super().__call__(batches))
 
 
-class MultiExperimentLoss(BaseLoss[CountBatch]):
+class MultiExperimentLoss(BaseLoss[CountBatch | PairedCountBatch]):
     """Multitask optimization of multiple count tables with a Poisson loss.
 
     Attributes:
@@ -385,7 +385,7 @@ class MultiExperimentLoss(BaseLoss[CountBatch]):
 
     @override
     def negloglik(
-        self, transform: Transform, batch: CountBatch
+        self, transform: Transform, batch: CountBatch | PairedCountBatch
     ) -> tuple[Tensor, Tensor]:
         if self.full_loss:
             loglik = (

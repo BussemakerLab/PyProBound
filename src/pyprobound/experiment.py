@@ -97,7 +97,7 @@ class Experiment(Transform):
 
     @override
     @Transform.cache
-    def forward(self, seqs: Tensor) -> Tensor:
+    def forward(self, seqs: Tensor | tuple[Tensor, Tensor]) -> Tensor:
         r"""Predicts the log probe frequencies.
 
         .. math::
@@ -108,7 +108,8 @@ class Experiment(Transform):
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`,
+                or a ``(seqs_left, seqs_right)`` pair for two-end assays.
 
         Returns:
             The log frequency tensor of shape

@@ -182,7 +182,9 @@ class Component(torch.nn.Module, abc.ABC):
         self._blocking: dict[str, set[Component]] = collections.defaultdict(
             set
         )
-        self._caches: dict[str, tuple[int | None, Tensor | None]] = {}
+        self._caches: dict[
+            str, tuple[int | tuple[int, int] | None, Tensor | None]
+        ] = {}
 
     @override
     def __repr__(self) -> str:
@@ -431,8 +433,9 @@ class Transform(Component):
 
     @classmethod
     def cache(
-        cls, fun: Callable[[ComponentT, Tensor], Tensor]
-    ) -> Callable[[ComponentT, Tensor], Tensor]:
+        cls,
+        fun: Callable[[ComponentT, Any], Tensor],
+    ) -> Callable[[ComponentT, Any], Tensor]:
         """Decorator for a function to cache its output.
 
         The decorator must be applied to every function call whose output will
@@ -440,9 +443,17 @@ class Transform(Component):
         """
 
         @functools.wraps(fun)
-        def cache_decorator(self: ComponentT, seqs: Tensor) -> Tensor:
+        def cache_decorator(
+            self: ComponentT, seqs: Tensor | tuple[Tensor, Tensor]
+        ) -> Tensor:
             # pylint: disable=protected-access
-            data_ptr = seqs.data_ptr()
+            if isinstance(seqs, tuple):
+                data_ptr: int | tuple[int, int] = (
+                    seqs[0].data_ptr(),
+                    seqs[1].data_ptr(),
+                )
+            else:
+                data_ptr = seqs.data_ptr()
             logger.info("Calling %s.%s(%s)", self, fun.__name__, data_ptr)
             logger.debug("%s._caches=%s", self, self._caches)
             ptr, output = self._caches.get(fun.__name__, (None, None))

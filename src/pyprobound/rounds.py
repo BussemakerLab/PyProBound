@@ -16,6 +16,25 @@ from .aggregate import Aggregate
 from .base import Binding, BindingOptim, Call, Component, Spec, Transform
 from .utils import log1mexp
 
+# A single sequence batch, or a (left, right) pair for two-end assays (ATAC).
+SeqsInput = Tensor | tuple[Tensor, Tensor]
+
+
+def seqs_batch_size(seqs: SeqsInput) -> int:
+    """Number of rows in a sequence batch or paired sequence batch."""
+    if isinstance(seqs, tuple):
+        if len(seqs) != 2:
+            raise ValueError(
+                "Paired sequence input must be a length-2 tuple "
+                "(seqs_left, seqs_right)"
+            )
+        if len(seqs[0]) != len(seqs[1]):
+            raise ValueError(
+                "Left and right sequence batches must have the same length"
+            )
+        return len(seqs[0])
+    return len(seqs)
+
 
 def repeat_round(
     binding: Iterable[Binding], n_rounds: int, round_type: type[Round]
@@ -163,20 +182,21 @@ class BaseRound(Transform, abc.ABC):
             )
 
     @abc.abstractmethod
-    def log_aggregate(self, seqs: Tensor) -> Tensor:
+    def log_aggregate(self, seqs: SeqsInput) -> Tensor:
         r"""Predicts the log aggregate :math:`\log Z_i`.
 
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`,
+                or a ``(seqs_left, seqs_right)`` pair for two-end rounds.
 
         Returns:
             The log aggregate tensor of shape :math:`(\text{minibatch},)`.
         """
 
     @abc.abstractmethod
-    def log_enrichment(self, seqs: Tensor) -> Tensor:
+    def log_enrichment(self, seqs: SeqsInput) -> Tensor:
         r"""Predicts the log enrichment ratio.
 
         .. math::
@@ -185,7 +205,8 @@ class BaseRound(Transform, abc.ABC):
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`,
+                or a ``(seqs_left, seqs_right)`` pair for two-end rounds.
 
         Returns:
             The log enrichment ratio tensor of shape
@@ -193,7 +214,7 @@ class BaseRound(Transform, abc.ABC):
         """
 
     @Transform.cache
-    def log_cumulative_enrichment(self, seqs: Tensor) -> Tensor:
+    def log_cumulative_enrichment(self, seqs: SeqsInput) -> Tensor:
         r"""Predicts the log cumulative enrichment.
 
         .. math::
@@ -202,7 +223,8 @@ class BaseRound(Transform, abc.ABC):
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`,
+                or a ``(seqs_left, seqs_right)`` pair for two-end rounds.
 
         Returns:
             The log enrichment ratio tensor of shape
@@ -219,7 +241,7 @@ class BaseRound(Transform, abc.ABC):
 
     @override
     @Transform.cache
-    def forward(self, seqs: Tensor) -> Tensor:
+    def forward(self, seqs: SeqsInput) -> Tensor:
         r"""Predicts the log relative count.
 
         .. math::
@@ -228,7 +250,8 @@ class BaseRound(Transform, abc.ABC):
         Args:
             seqs: A sequence tensor of shape
                 :math:`(\text{minibatch},\text{length})` or
-                :math:`(\text{minibatch},\text{in_channels},\text{length})`.
+                :math:`(\text{minibatch},\text{in_channels},\text{length})`,
+                or a ``(seqs_left, seqs_right)`` pair for two-end rounds.
 
         Returns:
             The log relative count tensor of shape :math:`(\text{minibatch},)`.
@@ -252,12 +275,14 @@ class InitialRound(BaseRound):
         return iter(())
 
     @override
-    def log_aggregate(self, seqs: Tensor) -> Tensor:
+    def log_aggregate(self, seqs: SeqsInput) -> Tensor:
         return self.log_enrichment(seqs)
 
     @override
-    def log_enrichment(self, seqs: Tensor) -> Tensor:
-        return torch.zeros(len(seqs), device=self.log_depth.device)
+    def log_enrichment(self, seqs: SeqsInput) -> Tensor:
+        return torch.zeros(
+            seqs_batch_size(seqs), device=self.log_depth.device
+        )
 
 
 class Round(BaseRound):
@@ -348,7 +373,12 @@ class Round(BaseRound):
         yield self.aggregate
 
     @override
-    def log_aggregate(self, seqs: Tensor) -> Tensor:
+    def log_aggregate(self, seqs: SeqsInput) -> Tensor:
+        if isinstance(seqs, tuple):
+            raise TypeError(
+                f"{type(self).__name__} expects a single sequence tensor; "
+                "use AtacFragmentRound / AtacFragmentBoundRound for paired ends"
+            )
         return self.aggregate(seqs)
 
 
@@ -384,8 +414,89 @@ class BoundUnsaturatedRound(Round):
     """
 
     @override
-    def log_enrichment(self, seqs: Tensor) -> Tensor:
+    def log_enrichment(self, seqs: SeqsInput) -> Tensor:
         return self.log_aggregate(seqs)
+
+
+class AtacFragmentRound(Round):
+    r"""Unsaturated two-end ATAC-seq enrichment round.
+
+    An ATAC fragment is observed only if Tn5 inserts at both ends, so
+    enrichment over the input round is the product of local accessibilities:
+
+    .. math::
+        \frac{f_{i,r}}{f_{i,r-1}} = Z_{i,L}\, Z_{i,R}
+
+    When the two ends sample the same open region,
+    :math:`Z_{i,L}\approx Z_{i,R}\approx Z_i` and enrichment scales as
+    accessibility squared. Expects ``seqs`` as
+    ``(seqs_left, seqs_right)`` (see :class:`~pyprobound.PairedCountTable`).
+
+    Both ends are scored in a single :class:`~pyprobound.Aggregate` call
+    (concatenated along the batch dimension) so ProBound's output cache
+    remains valid.
+
+    Attributes:
+        aggregate (Aggregate): Shared binding components scored at each end.
+        reference_round (BaseRound): The previous round for cumulative
+            enrichment.
+        log_depth (Tensor): The sequencing depth :math:`\eta` in log space.
+    """
+
+    @override
+    def log_aggregate(self, seqs: SeqsInput) -> Tensor:
+        if not isinstance(seqs, tuple):
+            raise TypeError(
+                "AtacFragmentRound expects seqs=(seqs_left, seqs_right)"
+            )
+        seqs_left, seqs_right = seqs
+        n_batch = seqs_left.shape[0]
+        log_z = self.aggregate(torch.cat([seqs_left, seqs_right], dim=0))
+        return log_z[:n_batch] + log_z[n_batch:]
+
+    @override
+    def log_enrichment(self, seqs: SeqsInput) -> Tensor:
+        return self.log_aggregate(seqs)
+
+
+class AtacFragmentBoundRound(Round):
+    r"""Saturated two-end ATAC-seq enrichment round.
+
+    .. math::
+        \frac{f_{i,r}}{f_{i,r-1}}
+            = \frac{Z_{i,L}}{1+Z_{i,L}} \times \frac{Z_{i,R}}{1+Z_{i,R}}
+
+    Expects ``seqs`` as ``(seqs_left, seqs_right)``. Both ends are scored in
+    one Aggregate call (see :class:`AtacFragmentRound`).
+
+    Attributes:
+        aggregate (Aggregate): Shared binding components scored at each end.
+        reference_round (BaseRound): The previous round for cumulative
+            enrichment.
+        log_depth (Tensor): The sequencing depth :math:`\eta` in log space.
+    """
+
+    @override
+    def log_aggregate(self, seqs: SeqsInput) -> Tensor:
+        if not isinstance(seqs, tuple):
+            raise TypeError(
+                "AtacFragmentBoundRound expects seqs=(seqs_left, seqs_right)"
+            )
+        seqs_left, seqs_right = seqs
+        n_batch = seqs_left.shape[0]
+        log_z = self.aggregate(torch.cat([seqs_left, seqs_right], dim=0))
+        return log_z[:n_batch] + log_z[n_batch:]
+
+    @override
+    def log_enrichment(self, seqs: SeqsInput) -> Tensor:
+        if not isinstance(seqs, tuple):
+            raise TypeError(
+                "AtacFragmentBoundRound expects seqs=(seqs_left, seqs_right)"
+            )
+        seqs_left, seqs_right = seqs
+        n_batch = seqs_left.shape[0]
+        log_z = self.aggregate(torch.cat([seqs_left, seqs_right], dim=0))
+        return F.logsigmoid(log_z[:n_batch]) + F.logsigmoid(log_z[n_batch:])
 
 
 class UnboundRound(Round):
