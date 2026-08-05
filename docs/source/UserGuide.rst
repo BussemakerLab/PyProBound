@@ -5,9 +5,10 @@ given the count of each observed sequence across one or more sequential enrichme
 The likelihood is computed by predicting the binding probability of a sequence,
 and from this probability predicting the sequence count across the different enrichment rounds.
 
-This package [#Li2023]_ implements ProBound in Python using PyTorch, which allows for the analysis
+This package [#Li2024]_ implements ProBound in Python using PyTorch, which allows for the analysis
 of sequences of varying lengths, among other features. To learn more about PyTorch, check out their
-[Quick Start tutorial](https://pytorch.org/tutorials/beginner/basics/quickstart_tutorial.html).
+`Quick Start tutorial
+<https://docs.pytorch.org/tutorials/beginner/basics/quickstart_tutorial.html>`_.
 
 This User Guide covers all of the core features
 designed into the original implementation of ProBound.
@@ -49,7 +50,7 @@ TCCAT    1       0
 ===== ======= =======
 
 Rounds 1 and 2 may correspond to successive SELEX rounds.
-For `in-vivo` TF binding assays (such as ChIP-seq, ChIP-exo, CUT&Tag, CUT&RUN, ChIP-exo, etc.)
+For `in-vivo` TF binding assays (such as ChIP-seq, ChIP-exo, CUT&Tag, CUT&RUN, etc.)
 Round 1 would be the mock library, and Round 2 would be the assay library.
 
 This count table should be loaded into a
@@ -104,9 +105,11 @@ PSAMs can be seeded with IUPAC code motifs, and can additionally model pairwise 
 One example that uses all of these features is :doc:`CEBPγ: EpiSELEX-seq <_notebooks/CEBPg>`.
 For further information, refer to the :doc:`PSAM API <_autosummary/pyprobound.layers.psam.PSAM>`.
 
-A PSAM can also be imported from external resources, such as
-`MotifCentral <https://motifcentral.org>`_ [#Rube2022]_, as well as `JASPAR <https://jaspar.elixir.no>`_
-and `HOCOMOCO 11 <https://hocomoco11.autosome.org>`_, by using the functions
+A PSAM can also be imported from a matrix with one row per alphabet symbol by using
+:doc:`import_matrix <_autosummary/pyprobound.external.import_matrix>`.
+PyProBound also provides helpers for external resources such as
+`MotifCentral <https://motifcentral.org>`_ [#Rube2022]_, `JASPAR <https://jaspar.elixir.no>`_,
+and the `HOCOMOCO 11 archive <https://hocomoco14.autosome.org/downloads_v11>`_:
 :doc:`import_motif_central <_autosummary/pyprobound.external.import_motif_central>`,
 :doc:`import_jaspar <_autosummary/pyprobound.external.import_jaspar>`, and
 :doc:`import_hocomoco <_autosummary/pyprobound.external.import_hocomoco>`, respectively.
@@ -247,7 +250,8 @@ normalized by the total number of observed sequences in their corresponding coun
 Given a count table :math:`k`, this is
 
 .. math::
-    \frac{1}{\sum_{i,r} k_{i,r}}
+
+    -\frac{1}{\sum_{i,r} k_{i,r}}
     \sum_{i,r} k_{i,r} \log \frac{
         \eta_{r} f_{i,r}
     }{
@@ -283,6 +287,9 @@ from the original ProBound publication with
 
 The model will be saved to the file specified with the `checkpoint` keyword.
 The output of the optimization can also be captured by specifying the `output` keyword.
+The latest development version on ``main`` also supports automatic mixed precision.
+On supported hardware, :code:`use_amp=True` enables it, while the optional
+:code:`dtype` argument selects the autocast data type, such as :code:`torch.float16` on CUDA.
 Additional sampling, optimization, and early stopping parameters can also be provided.
 One example that utilizes these features is
 :doc:`Src: Kinase-seq with Early Stopping <_notebooks/Src_earlystop>`.
@@ -311,7 +318,7 @@ into a :doc:`Cooperativity <_autosummary/pyprobound.cooperativity.Cooperativity>
 .. code-block:: python
 
     spacing =  pyprobound.Spacing([psam_A], [psam_B])
-    cooperativity = pyprobound.Cooperativity(spacing, mode_A, modes_B)
+    cooperativity = pyprobound.Cooperativity(spacing, mode_A, mode_B)
 
 The Cooperativity object can then be used just like a Mode object.
 An example of cooperativity modeling can be found in
@@ -359,7 +366,7 @@ the experiment can then be created with
     experiment = pyprobound.Experiment([initial_round, bound_round, unbound_round])
 
 Finally, after training, the
-`free_protein <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.experiment.Experiment.html#pyprobound.experiment.Experiment.free_protein>`_.
+`free_protein <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.experiment.Experiment.html#pyprobound.experiment.Experiment.free_protein>`_
 function of the :doc:`Experiment <_autosummary/pyprobound.experiment.Experiment>` object
 can be used to calculate the free protein concentration.
 The indices of the input, bound, and unbound rounds must be provided.
@@ -389,11 +396,11 @@ Re-loading
 Any model component can be checkpointed with
 `save <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.base.Component.html#pyprobound.base.Component.save>`_,
 and reloaded from a checkpoint with
-`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.base.Component.html#pyprobound.base.Component.reload>`_.
+`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.base.Component.html#pyprobound.base.Component.reload>`__.
 
 If an :doc:`Optimizer <_autosummary/pyprobound.optimizer.Optimizer>` has been previously trained,
 it can similarly be directly reloaded with
-`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.optimizer.Optimizer.html#pyprobound.optimizer.Optimizer.reload>`_.
+`reload <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.optimizer.Optimizer.html#pyprobound.optimizer.Optimizer.reload>`__.
 
 Scoring
 ^^^^^^^
@@ -402,9 +409,9 @@ Sequences that are already encoded in a
 :code:`seqs` attribute. Sequences represented as a string can be encoded using
 `translate <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.alphabets.Alphabet.html#pyprobound.alphabets.Alphabet.translate>`_,
 although scoring requires creating a batch-first dimension with
-`unsqueeze <https://pytorch.org/docs/stable/generated/torch.unsqueeze.html#torch.unsqueeze>`_.
+`unsqueeze <https://docs.pytorch.org/docs/stable/generated/torch.unsqueeze.html>`_.
 
-Sequences can be directly be scored using the objects created to make the model.
+Sequences can be scored directly using the objects created to make the model.
 For example, the output of a :doc:`Mode <_autosummary/pyprobound.mode.Mode>`,
 :math:`-\log K^{rel}_{\text{D}}`, can be estimated for a sequence as 
 
@@ -421,9 +428,9 @@ which are used throughout the Examples in the sidebar.
 
 In :doc:`CTCF: Single Experiment <_notebooks/CTCF>`, examples include
 
-* :doc:`pyprobound.plotting.logo <_autosummary/pyprobound.plotting.logo>`, which represents the PSAM as a sequence logo using `Logomaker <https://logomaker.readthedocs.io/>`_;
+* :doc:`pyprobound.plotting.logo <_autosummary/pyprobound.plotting.logo>`, which represents the PSAM as a sequence logo using `Logomaker <https://logomaker.readthedocs.io/en/latest/>`_;
 * :doc:`pyprobound.plotting.kmer_enrichment <_autosummary/pyprobound.plotting.kmer_enrichment>`, which plots the average enrichment of each subsequence of length `k` in the experiment;
-* :doc:`pyprobound.plotting.probe_enrichment <_autosummary/pyprobound.plotting.kmer_enrichment>`, which plots the enrichment of each full sequence in the experiment and bins these values by the predicted value to overcome shot noise;
+* :doc:`pyprobound.plotting.probe_enrichment <_autosummary/pyprobound.plotting.probe_enrichment>`, which plots the enrichment of each full sequence in the experiment and bins these values by the predicted value to overcome shot noise;
 * and :doc:`pyprobound.plotting.contribution <_autosummary/pyprobound.plotting.contribution>`, which plots the contribution of each binding mode to the overall enrichment as a function of the level of enrichment, similarly binned as in `probe_enrichment`.
 
 Validation
@@ -470,7 +477,7 @@ If not specified, :math:`\text{observation}` is the identity function by default
 :math:`\text{prediction}` must always be specified;
 for example, if the observed value is proportional to binding, :math:`\text{prediction}` should be
 :code:`F.sigmoid` and :code:`F.logsigmoid` for :code:`Fit` and :code:`LogFit`, respectively
-(:code:`F` is a common alias for the `torch.nn.functional <https://pytorch.org/docs/stable/nn.functional.html>`_ library).
+(:code:`F` is a common alias for the `torch.nn.functional <https://docs.pytorch.org/docs/stable/nn.functional.html>`_ library).
 
 The constructors for :doc:`Fit <_autosummary/pyprobound.fitting.Fit>`
 and :doc:`LogFit <_autosummary/pyprobound.fitting.LogFit>` contain many parameters.
@@ -491,5 +498,5 @@ For further information, refer to the :doc:`fitting API <_autosummary/pyprobound
 References
 ----------
 .. [#Rube2022] Rube, H.T., Rastogi, C., Feng, S. et al. Prediction of protein–ligand binding affinity from sequencing data with interpretable machine learning. Nat Biotechnol 40, 1520–1527 (2022). https://doi.org/10.1038/s41587-022-01307-0
-.. [#Li2023] Li, X., Melo, L.A.N., and Bussemaker, H.J. Benchmarking DNA binding affinity models using allele-specific transcription factor binding data. bioRxiv (2023). https://doi.org/10.1038/s41587-022-01307-0
+.. [#Li2024] Li, X., Melo, L.A.N. & Bussemaker, H.J. Benchmarking and building DNA binding affinity models using allele-specific and allele-agnostic transcription factor binding data. Genome Biology 25, 284 (2024). https://doi.org/10.1186/s13059-024-03424-2
 .. [#Riley2015] Riley, T.R., Lazarovici, A., Mann, R.S., and Bussemaker, H.J. Building accurate sequence-to-affinity models from high-throughput in vitro protein-DNA binding data using FeatureREDUCE. eLife 4:e06397 (2015). https://doi.org/10.7554/eLife.06397 

@@ -4,7 +4,7 @@ Implementing ProBound in a PyTorch framework also allows for not only variable
 length sequences, but also more flexible modeling approaches,
 such as multi-layer binding modes and more complex assay configurations.
 These will be covered in the context of modeling sequence-dependent bias
-during the fragmentation step of ChIP-seq experiments as discussed in [#Li2023]_.
+during the fragmentation step of ChIP-seq experiments as discussed in [#Li2024]_.
 An example can be found in :doc:`CTCF: ChIP-seq <_notebooks/CTCF_ChIP-seq>`.
 
 
@@ -17,7 +17,7 @@ Kd-seq where both the bound and unbound libraries are sampled from the same inpu
 
 A `Round` does not even need to correspond to an observed sequencing round in the count table.
 For example, the sonication step in a ChIP-seq experiment can be modeled
-as an unobserved sequence-dependent bias round [#Li2023]_. For example,
+as an unobserved sequence-dependent bias round [#Li2024]_. For example,
 
 .. code-block:: python
 
@@ -26,7 +26,7 @@ as an unobserved sequence-dependent bias round [#Li2023]_. For example,
         bias_modes, round_initial,
     )
     round_bound = pyprobound.rounds.BoundUnsaturatedRound.from_binding(
-        binding_modes, reference_round
+        binding_modes, reference_round=round_bias,
     )
     experiment = pyprobound.Experiment([round_initial, round_bound])
 
@@ -52,12 +52,12 @@ and then passing the output of that layer to the standard
         pyprobound.layers.RollSpec(alphabet, direction="right", max_length=10),
         count_table,
     )
-    conv1d = pyprobound.layers.Conv1d.from_psam(psam, roll_left)
+    conv1d = pyprobound.layers.Conv1d.from_psam(psam, roll)
     mode = pyprobound.Mode([roll, conv1d])
 
 Even if a multi-layer model can't be encoded using PyProBound's
 :doc:`Layers <_autosummary/pyprobound.layers.layer.Layer>`,
-any `torch.nn.Module <https://pytorch.org/docs/stable/generated/torch.nn.Module.html>`_
+any `torch.nn.Module <https://docs.pytorch.org/docs/stable/generated/torch.nn.Module.html>`_
 that takes one-hot encoded sequencing data of shape 
 :math:`(\text{minibatch},\text{in_channels},\text{in_length})`
 and returns scores of shape :math:`(\text{minibatch},1,1)` can be wrapped into a
@@ -86,7 +86,7 @@ between ProBound and PyProBound, which include the following:
 * PyProBound scores all PSAMs using the same flank length, so ProBound models
   that vary the flank length for each PSAM require padding the input of each
   Conv1d layer using :doc:`get_padding_layers <_autosummary/pyprobound.layers.pad.get_padding_layers>`.
-* PyProBound always creates and regularizes parameters even if they not trained.
+* PyProBound always creates and regularizes parameters even if they are not trained.
   For example, the position bias parameter will always be a component for every
   PSAM, so to import a ProBound model that does not contain a position bias
   parameter, the
@@ -121,11 +121,11 @@ there are a couple of steps that can be taken to help it out.
    :code:`MultiExperimentLoss(..., full_loss=True)`.
 3. The `optim_args <https://pyprobound.readthedocs.io/en/latest/_autosummary/pyprobound.optimizer.Optimizer.html#pyprobound.optimizer.Optimizer.__init__>`_
    dictionary is passed directly to the optimizer, which by default is
-   `LBFGS <https://pytorch.org/docs/stable/generated/torch.optim.LBFGS.html>`_.
+   `LBFGS <https://docs.pytorch.org/docs/stable/generated/torch.optim.LBFGS.html>`_.
    For difficult optimization problems, increasing :code:`max_iter` or decreasing :code:`tolerance_grad` might help.
 
 References
 ----------
-.. [#Li2023] Li, X., Melo, L.A.N., and Bussemaker, H.J. Benchmarking DNA binding affinity models using allele-specific transcription factor binding data. bioRxiv (2023). https://doi.org/10.1038/s41587-022-01307-0
+.. [#Li2024] Li, X., Melo, L.A.N. & Bussemaker, H.J. Benchmarking and building DNA binding affinity models using allele-specific and allele-agnostic transcription factor binding data. Genome Biology 25, 284 (2024). https://doi.org/10.1186/s13059-024-03424-2
 .. [#Rube2022] Rube, H.T., Rastogi, C., Feng, S. et al. Prediction of protein–ligand binding affinity from sequencing data with interpretable machine learning. Nat Biotechnol 40, 1520–1527 (2022). https://doi.org/10.1038/s41587-022-01307-0
 .. [#Riley2015] Riley, T.R., Lazarovici, A., Mann, R.S., and Bussemaker, H.J. Building accurate sequence-to-affinity models from high-throughput in vitro protein-DNA binding data using FeatureREDUCE. eLife 4:e06397 (2015). https://doi.org/10.7554/eLife.06397 

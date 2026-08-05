@@ -49,16 +49,25 @@ An overview of ProBound and PyProBound is provided in the :doc:`User Guide <User
 
 Installation
 ------------
+PyProBound requires Python 3.10 or newer.
+
 The PyPI package `pyProBound <https://pypi.org/project/pyprobound/>`_
 is a Python wrapper for ProBoundTools, from the original Java implementation of ProBound.
 The PyPI package is not maintained by the Bussemaker Lab.
 
-To install the PyProBound package described in this documentation,
-download directly from the `repository <https://github.com/BussemakerLab/PyProBound>`_ with
+To install the stable `v1.5.0 release
+<https://github.com/BussemakerLab/PyProBound/releases/tag/v1.5.0>`_ of the
+PyProBound package described in this documentation, use
 
 .. code-block::
 
-   pip install git+https://github.com/BussemakerLab/PyProBound.git
+   pip install git+https://github.com/BussemakerLab/PyProBound.git@v1.5.0
+
+To install the latest development version from the ``main`` branch instead, use
+
+.. code-block::
+
+   pip install git+https://github.com/BussemakerLab/PyProBound.git@main
 
 References
 ----------
