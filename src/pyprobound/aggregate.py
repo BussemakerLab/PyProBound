@@ -76,7 +76,7 @@ class Contribution(Transform):
         yield self.binding
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Contribution.unfreezable" = "all") -> None:
         if parameter in ("activity", "all") and self.train_activity:
             if torch.isneginf(self.log_activity):
                 raise ValueError(
@@ -216,7 +216,7 @@ class Aggregate(Transform):
                 yield ctrb
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Aggregate.unfreezable" = "all") -> None:
         if parameter in ("concentration", "all"):
             if self.train_concentration:
                 self.log_target_concentration.requires_grad_()

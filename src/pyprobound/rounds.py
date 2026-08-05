@@ -117,7 +117,7 @@ class BaseRound(Transform, abc.ABC):
     def components(self) -> Iterator[Aggregate]: ...
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "BaseRound.unfreezable" = "all") -> None:
         if parameter in ("depth", "all") and self.train_depth:
             self.log_depth.requires_grad_()
         if parameter != "depth":
@@ -532,7 +532,7 @@ class RhoGammaRound(Round):
         )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "RhoGammaRound.unfreezable" = "all") -> None:
         if parameter in ("rho", "all"):
             self.rho.requires_grad_()
             self.gamma.requires_grad_()
@@ -683,7 +683,9 @@ class ExponentialRound(Round):
         )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(
+        self, parameter: "ExponentialRound.unfreezable" = "all"
+    ) -> None:
         if parameter in ("delta", "all") and self.train_delta:
             self.delta.requires_grad_()
         if parameter != "delta":

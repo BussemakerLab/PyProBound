@@ -177,7 +177,7 @@ class Spacing(Spec):
         return iter(())
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Spacing.unfreezable" = "all") -> None:
         if parameter in ("spacing", "all"):
             self.log_spacing.requires_grad_()
         if parameter != "spacing":
@@ -672,7 +672,7 @@ class Cooperativity(Binding):
                 )
 
     @override
-    def unfreeze(self, parameter: unfreezable = "all") -> None:
+    def unfreeze(self, parameter: "Cooperativity.unfreezable" = "all") -> None:
         if parameter in ("hill", "all") and self.train_hill:
             self.log_hill.requires_grad_()
         if parameter in ("posbias", "all") and self.train_posbias:
