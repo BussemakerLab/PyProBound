@@ -24,7 +24,7 @@ from torch import Tensor
 from .aggregate import Aggregate, Contribution
 from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
-from .layers import PSAM, Conv0d, Conv1d, ModeKey
+from .layers import PSAM, Conv0d, Conv1d, Kmers, ModeKey
 from .mode import Mode
 from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
@@ -710,6 +710,46 @@ def enrichment_plotter(
     ax.legend(loc="lower right")
 
     return out
+
+
+def kmer_scores(
+    kmers: Kmers, n: int = 15, motif: str | None = None
+) -> pd.DataFrame:
+    r"""The highest-scoring k-mers of a fitted k-mer table.
+
+    The quickest check that a k-mer fit worked: the top of the table should be
+    the expected site.
+
+    Args:
+        kmers: A fitted :class:`~pyprobound.layers.Kmers` spec.
+        n: How many k-mers to return.
+        motif: If given, also report the Hamming distance from `motif` to the
+            closest window of the same length inside each k-mer, so 0 means the
+            k-mer contains `motif` exactly.
+
+    Returns:
+        A dataframe indexed by k-mer, with the score in units of
+        :math:`-\Delta\Delta G/RT`.
+    """
+    scores = kmers.get_kmer_scores()
+    frame = pd.DataFrame(
+        {"-ddG/RT": list(scores.values())[:n]},
+        index=pd.Index(list(scores)[:n], name="kmer"),
+    )
+    if motif is not None:
+        if len(motif) > kmers.kmer_length:
+            raise ValueError(
+                f"motif {motif} is longer than"
+                f" kmer_length={kmers.kmer_length}"
+            )
+        frame[f"mismatches_vs_{motif}"] = [
+            min(
+                sum(a != b for a, b in zip(word[offset:], motif))
+                for offset in range(len(word) - len(motif) + 1)
+            )
+            for word in frame.index
+        ]
+    return frame
 
 
 def probe_enrichment(

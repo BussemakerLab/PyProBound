@@ -190,7 +190,13 @@ class Optimizer(Generic[T]):
         def param_str(param: Tensor, n_tabs: int = 3) -> str:
             old_pad = " " * 8
             new_pad = "\t" * (n_tabs) + old_pad
-            return ("\n" + new_pad).join(str(param).split("\n"))
+            text = str(param)
+            if param.numel() > 1000:
+                # torch only summarizes an axis longer than 2*edgeitems+1, so a
+                # k-mer table of shape (|A|,)*k prints in full however large it
+                # is. Flatten so the threshold applies, and keep the shape.
+                text = f"shape={tuple(param.shape)} {str(param.flatten())}"
+            return ("\n" + new_pad).join(text.split("\n"))
 
         torch.set_printoptions(threshold=10)  # type: ignore[no-untyped-call]
         out = []
