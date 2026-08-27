@@ -799,6 +799,14 @@ class PSAM(LayerSpec):
             matrix = torch.cat((matrix, matrix_reverse))
         return matrix
 
+    def get_logo_filter(self, dist: int = 0) -> Tensor:
+        """PSAM filter used for sequence logos.
+
+        Overridden by subclasses whose `get_filter` returns a filter expanded
+        over extra channels, which `Conv1d` needs but a logo should not show.
+        """
+        return self.get_filter(dist)
+
     def fix_gauge(self) -> None:
         """Removes invariances between monomer and pairwise parameters."""
         # TODO: doesn't work with symmetry string and dinucleotide features

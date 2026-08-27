@@ -3,7 +3,7 @@
 import copy
 import math
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias, cast
 
 import logomaker
@@ -24,7 +24,7 @@ from torch import Tensor
 from .aggregate import Aggregate, Contribution
 from .cooperativity import Cooperativity, Spacing
 from .experiment import Experiment
-from .layers import PSAM, Conv0d, Conv1d, Kmers, ModeKey
+from .layers import PSAM, Conv0d, Conv1d, IsingPSAM, Kmers, ModeKey
 from .mode import Mode
 from .rounds import BaseRound, ExponentialRound
 from .table import CountBatch, score
@@ -64,7 +64,7 @@ def logomaker_plotter(
 
     # Create monomer dataframe
     matrix: NDArray[np.float32] = (
-        psam.get_filter(0)
+        psam.get_logo_filter()
         .detach()[0]
         .T.to(device="cpu", dtype=torch.float32)
         .numpy()
@@ -750,6 +750,167 @@ def kmer_scores(
             for word in frame.index
         ]
     return frame
+
+
+def coupling_sensitivity(
+    psam: IsingPSAM,
+    loss_fn: Callable[[], float],
+    n_counts: float | None = None,
+    step: float = 1.0,
+) -> pd.DataFrame:
+    r"""Profiles the loss around each fitted :math:`J` of an Ising PSAM.
+
+    Displaces one :math:`J` at a time by :math:`\pm` `step`, holding
+    everything else fixed, and records the change in loss. The curvature
+    :math:`\Delta L(+) + \Delta L(-)` approximates
+    :math:`\text{step}^2 d^2L/dJ^2`, giving a standard error
+    :math:`\sigma_J = \text{step} / \sqrt{\text{curvature} \cdot N}`.
+
+    A gradient is no substitute: at a converged optimum it vanishes whether or
+    not :math:`J` is determined, so it measures convergence, not
+    identifiability. A coupling that fits large is usually saturated, where the
+    likelihood is indifferent to how much further it grows, making it a lower
+    bound rather than a value.
+
+    Args:
+        psam: A fitted :class:`~pyprobound.layers.IsingPSAM`.
+        loss_fn: Returns the loss with the current parameters, such as
+            `lambda: float(model([count_table])[0])`.
+        n_counts: The total number of counts, used to scale `sigma`; omit to
+            leave it undefined.
+        step: The displacement of :math:`J`, in units of :math:`RT`.
+
+    Returns:
+        A dataframe indexed by nucleotide interface, with :math:`J`, the change
+        in loss under displacement, the curvature, and :math:`\sigma_J`.
+    """
+    base = loss_fn()
+    minus: list[float] = []
+    plus: list[float] = []
+    for i in range(psam.coupling.numel()):
+        for delta, out in ((-step, minus), (step, plus)):
+            with torch.no_grad():
+                psam.coupling[i] += delta
+            out.append(loss_fn() - base)
+            with torch.no_grad():
+                psam.coupling[i] -= delta
+
+    groups = psam.coupling_groups.cpu().numpy()
+    index = pd.Index(
+        [f"{i + 1}|{i + 2}" for i in range(len(groups))], name="interface"
+    )
+    curvature = np.array([m + p for m, p in zip(minus, plus)])[groups]
+    frame = pd.DataFrame(
+        {
+            "J": psam.interface_coupling().detach().cpu().numpy(),
+            "dloss_minus": np.array(minus)[groups],
+            "dloss_plus": np.array(plus)[groups],
+            "curvature": curvature,
+        },
+        index=index,
+    )
+    frame["sigma"] = np.where(
+        curvature > 0,
+        step / np.sqrt(np.abs(curvature) * (n_counts or float("nan"))),
+        float("inf"),
+    )
+    return frame
+
+
+def plot_coupling(
+    psam: IsingPSAM,
+    sensitivity: DataFrame | None = None,
+    motif: tuple[int, int] | None = None,
+    width: float = 7.0,
+    height: float = 2.7,
+) -> None:
+    r"""Plots :math:`J` of an Ising PSAM, and how well it is determined.
+
+    Args:
+        psam: A fitted :class:`~pyprobound.layers.IsingPSAM`.
+        sensitivity: The output of `coupling_sensitivity`. Adds error bars to
+            :math:`J` and a panel of the change in loss under displacement.
+            Interfaces whose :math:`J` cannot be resolved to within `step` are
+            hatched, marking a lower bound rather than a value.
+        motif: The inclusive 1-indexed range of positions to shade, such as the
+            span of a seeded motif.
+        width: The width of the figure.
+        height: The height of each panel.
+    """
+    coupling = psam.interface_coupling().detach().cpu().numpy()
+    n_interfaces = len(coupling)
+    positions = np.arange(n_interfaces)
+    n_panels = 1 if sensitivity is None else 2
+    _, ax = plt.subplots(
+        nrows=n_panels,
+        ncols=1,
+        figsize=(width, height * n_panels),
+        sharex=True,
+        squeeze=False,
+        tight_layout=True,
+    )
+    axs = cast(AxesArray, ax)
+
+    unresolved = np.zeros(n_interfaces, dtype=bool)
+    sigma = None
+    if sensitivity is not None and sensitivity["sigma"].notna().all():
+        sigma = sensitivity["sigma"].to_numpy()
+        unresolved = sigma > 1.0
+
+    bars = axs[0, 0].bar(
+        positions,
+        coupling,
+        color=["tab:gray" if i < 0 else "tab:blue" for i in coupling],
+    )
+    for rect, flag in zip(bars, unresolved):
+        if flag:
+            rect.set_hatch("///")
+            rect.set_edgecolor("black")
+            rect.set_linewidth(0.6)
+    if sigma is not None:
+        axs[0, 0].errorbar(
+            positions,
+            coupling,
+            yerr=np.where(np.isfinite(sigma), sigma, 0.0),
+            fmt="none",
+            ecolor="black",
+            elinewidth=1.0,
+            capsize=3,
+        )
+    axs[0, 0].axhline(0, color="black", lw=0.8)
+    axs[0, 0].set_ylabel(r"$J$ [$RT$]")
+    axs[0, 0].set_title("coupling per interface (hatched: lower bound only)")
+    if motif is not None:
+        axs[0, 0].axvspan(
+            motif[0] - 1.5, motif[1] - 0.5, color="tab:orange", alpha=0.12
+        )
+
+    if sensitivity is not None:
+        for offset, key, color, sign in (
+            (-0.2, "dloss_minus", "tab:purple", "-"),
+            (0.2, "dloss_plus", "tab:red", "+"),
+        ):
+            axs[1, 0].bar(
+                positions + offset,
+                np.clip(sensitivity[key].to_numpy(), 1e-12, None),
+                width=0.4,
+                color=color,
+                label=rf"$J {sign} \text{{step}}$",
+            )
+        axs[1, 0].set_yscale("log")
+        axs[1, 0].set_ylabel(r"$\Delta$ loss")
+        axs[1, 0].set_title("cost of displacing one $J$")
+        axs[1, 0].legend(fontsize="small", ncol=2)
+        axs[1, 0].set_xlabel("interface (positions joined)")
+    axs[-1, 0].set_xticks(
+        positions,
+        (
+            list(sensitivity.index)
+            if sensitivity is not None
+            else [f"{i + 1}|{i + 2}" for i in range(n_interfaces)]
+        ),
+    )
+    plt.show()
 
 
 def probe_enrichment(
