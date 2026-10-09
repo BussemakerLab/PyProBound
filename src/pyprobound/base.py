@@ -230,8 +230,18 @@ class Component(torch.nn.Module, abc.ABC):
     def reload_from_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Loads the model from a state dict.
 
+        Tensors are replaced rather than copied into, so that their shapes can
+        change, e.g. after :meth:`~pyprobound.layers.PSAM.update_footprint`.
+        A tensor reachable under several keys -- a parameter shared between
+        modules -- is replaced once, and the new tensor is assigned under every
+        key, so it stays shared.
+
         Args:
             state_dict: The state dict, usually returned by self.state_dict().
+
+        Raises:
+            ValueError: If keys that share one tensor in the model hold
+                different values in `state_dict`.
         """
 
         def get_attr(obj: Any, names: list[str]) -> Any:
@@ -245,13 +255,37 @@ class Component(torch.nn.Module, abc.ABC):
             else:
                 set_attr(getattr(obj, names[0]), names[1:], val)
 
+        # id of each replaced tensor -> (that tensor, its first key, the new
+        # tensor). Holding the old tensor keeps its id from being reused.
+        replaced: dict[int, tuple[Tensor, str, Any]] = {}
+
+        def replace(key: str, as_parameter: bool) -> None:
+            submod_names = key.split(".")
+            try:
+                self_attr = get_attr(self, submod_names)
+            except AttributeError:
+                return
+            if isinstance(self_attr, Tensor) and id(self_attr) in replaced:
+                _, first_key, new = replaced[id(self_attr)]
+                if not torch.equal(state_dict[key], state_dict[first_key]):
+                    raise ValueError(
+                        f"{key} and {first_key} are the same tensor in the"
+                        " model but hold different values in the state dict"
+                    )
+            else:
+                new = state_dict[key]
+                if as_parameter and isinstance(self_attr, torch.nn.Parameter):
+                    new = torch.nn.Parameter(
+                        new, requires_grad=self_attr.requires_grad
+                    )
+                if isinstance(self_attr, Tensor):
+                    replaced[id(self_attr)] = (self_attr, key, new)
+            set_attr(self, submod_names, new)
+
         # Update symmetry buffers
         for key in list(state_dict.keys()):
-            if "symmetry" not in key:
-                continue
-            checkpoint_param = state_dict[key]
-            submod_names = key.split(".")
-            set_attr(self, submod_names, checkpoint_param)
+            if "symmetry" in key:
+                replace(key, as_parameter=False)
 
         # Reshape convolution matrices
         for module in self.modules():
@@ -262,17 +296,7 @@ class Component(torch.nn.Module, abc.ABC):
 
         # Reshape remaining tensors
         for key in list(state_dict.keys()):
-            checkpoint_param = state_dict[key]
-            submod_names = key.split(".")
-            try:
-                self_attr = get_attr(self, submod_names)
-            except AttributeError:
-                continue
-            if isinstance(self_attr, torch.nn.Parameter):
-                checkpoint_param = torch.nn.Parameter(
-                    checkpoint_param, requires_grad=self_attr.requires_grad
-                )
-            set_attr(self, submod_names, checkpoint_param)
+            replace(key, as_parameter=True)
 
     def reload(self, checkpoint: FileLike) -> dict[str, Any]:
         """Loads the model from a checkpoint file.
